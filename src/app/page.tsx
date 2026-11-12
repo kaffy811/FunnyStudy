@@ -181,6 +181,19 @@ export default async function Home({
             </ul>
           </>
         )}
+        <Link
+          href="/style-preferences"
+          prefetch={false}
+          className="glass-panel mt-6 flex items-center gap-4 rounded-2xl p-5 transition hover:border-[var(--accent)] hover:bg-[var(--surface-muted)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent-strong)] sm:p-6"
+        >
+          <div className="min-w-0 flex-1 space-y-1">
+            <h2 className="text-lg font-semibold sm:text-xl">Humor style check</h2>
+            <p className="text-sm leading-6 text-[var(--muted)]">
+              Compare caption pairs and tell us which kinds of jokes you like. About 2 minutes.
+            </p>
+          </div>
+          <ArrowRightIcon aria-hidden className="h-5 w-5 shrink-0 text-[var(--accent-strong)]" />
+        </Link>
       </main>
       <AccountMenu displayName={displayName} email={user.email} signOutAction={signOut} />
     </div>

@@ -95,6 +95,15 @@ Add the deployed `/auth/callback` URLs in Google OAuth and Supabase auth
 settings. This app does not use a Supabase service-role key; all Supabase
 requests should use the logged-in user's JWT.
 
+## Humor style check
+
+`/style-preferences` (linked from the home page) records which humor styles a
+participant prefers by comparing controlled caption pairs. It needs the
+migration `supabase/migrations/20261112220000_add_humor_style_preferences.sql`
+applied in the target Supabase project (run it once in the SQL Editor). Data
+lands in `style_preference_responses` and `style_preference_feedback`; pure
+helpers are covered by `npm run test:style-preferences`.
+
 
 
 ## Funny Study Images
