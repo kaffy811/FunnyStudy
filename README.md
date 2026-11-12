@@ -95,27 +95,35 @@ Add the deployed `/auth/callback` URLs in Google OAuth and Supabase auth
 settings. This app does not use a Supabase service-role key; all Supabase
 requests should use the logged-in user's JWT.
 
-## Humor style check
+## AI studies (OpenAI)
 
-`/style-preferences` (linked from the home page) records which humor styles a
-participant prefers by comparing controlled caption pairs. It needs the
-migration `supabase/migrations/20261112220000_add_humor_style_preferences.sql`
-applied in the target Supabase project (run it once in the SQL Editor). Data
-lands in `style_preference_responses` and `style_preference_feedback`; pure
-helpers are covered by `npm run test:style-preferences`.
+`/ai-study` (the top card on the home page) gives every sign-in a fresh study:
+about 10 random images that appear in research studies (and are public or
+common-use), each with one AI-written caption. Humor styles (playful,
+sarcastic, absurd, deadpan, wholesome) are assigned evenly at random, so a
+`Funny` tap is an A/B signal per style. Ending a study asks OpenAI for a 2-4
+sentence humor description that is saved to the participant's profile and on
+the study; a rule-based summary is used if the AI is unavailable. Apply
+`supabase/migrations/20261113030000_add_ai_study_sessions.sql`. Pure helpers are
+covered by `npm run test:ai-study`.
 
-`/history` shows a participant's studies, latest style-check answers and an
-editable humor preference summary. It needs
-`supabase/migrations/20261113010000_add_profile_humor_summaries.sql`.
+`/history` shows the editable humor profile, per-style Funny rates, the
+personalization switch, past AI studies (expandable, with every caption),
+caption-lab captions and research-study participations. The old humor style
+check (`/style-preferences`) now redirects to `/ai-study`; its tables and data
+are kept. Earlier migrations
+`20261112220000_add_humor_style_preferences.sql`,
+`20261113010000_add_profile_humor_summaries.sql` and
+`20261113020000_add_ai_generated_captions.sql` are still required.
 
 ## Caption lab (OpenAI)
 
-`/caption-lab` writes captions for an uploaded photo or a sample image with
-the OpenAI API and lets participants rate them. Set `OPENAI_API_KEY` (and
-optionally `OPENAI_MODEL`, default `gpt-4.1-mini`) as server-only environment
-variables in `.env.local` and in Vercel (Production and Preview), and apply
-`supabase/migrations/20261113020000_add_ai_generated_captions.sql`. Uploaded
-photos are not stored. Tests: `npm run test:captions`.
+`/caption-lab` is where participants upload their own funny photos; the
+OpenAI API writes 4 captions in different humor styles and participants rate
+them. Set `OPENAI_API_KEY` (and optionally `OPENAI_MODEL`, default
+`gpt-4.1-mini`) as server-only environment variables in `.env.local` and in
+Vercel (Production and Preview). Uploaded photos are not stored. Tests:
+`npm run test:captions`.
 
 
 

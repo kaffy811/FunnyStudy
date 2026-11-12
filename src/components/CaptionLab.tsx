@@ -6,15 +6,12 @@ import Link from "next/link";
 import { generateLabCaptions, rateLabCaption, type LabCaption } from "@/app/caption-lab/actions";
 import { MAX_UPLOAD_DATA_URL_CHARS } from "@/lib/caption-generation";
 
-export type SampleImage = { pairId: number; imageUrl: string };
-
 type Props = {
-  samples: SampleImage[];
   configured: boolean;
   personalizationConsent: boolean;
 };
 
-type Selection = { source: "style_pair"; pairId: number; preview: string } | { source: "upload"; dataUrl: string; preview: string };
+type Selection = { dataUrl: string };
 
 /** Downscales a photo in the browser so it fits the server-action body limit. */
 async function resizeImage(file: File): Promise<string> {
@@ -31,7 +28,7 @@ async function resizeImage(file: File): Promise<string> {
   throw new Error("too large");
 }
 
-export function CaptionLab({ samples, configured, personalizationConsent }: Props) {
+export function CaptionLab({ configured, personalizationConsent }: Props) {
   const [selection, setSelection] = useState<Selection | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -52,7 +49,7 @@ export function CaptionLab({ samples, configured, personalizationConsent }: Prop
     if (!file.type.startsWith("image/")) return setError("Please choose an image file.");
     try {
       const dataUrl = await resizeImage(file);
-      choose({ source: "upload", dataUrl, preview: dataUrl });
+      choose({ dataUrl });
     } catch {
       setError("We couldn't read that image. Please try a JPEG or PNG.");
     }
@@ -62,9 +59,7 @@ export function CaptionLab({ samples, configured, personalizationConsent }: Prop
     if (!selection || pending) return;
     setPending(true);
     setError(null);
-    const result = await generateLabCaptions(
-      selection.source === "upload" ? { source: "upload", dataUrl: selection.dataUrl } : { source: "style_pair", pairId: selection.pairId }
-    );
+    const result = await generateLabCaptions({ source: "upload", dataUrl: selection.dataUrl });
     setPending(false);
     if (!result.success) return setError(result.error);
     setCaptions(result.captions);
@@ -91,10 +86,10 @@ export function CaptionLab({ samples, configured, personalizationConsent }: Prop
     <div className="space-y-5">
       <header className="space-y-2">
         <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[var(--soft)]">Caption lab</p>
-        <h1 className="text-3xl font-black sm:text-4xl">Let the AI write captions for you</h1>
+        <h1 className="text-3xl font-black sm:text-4xl">Caption your funny photos</h1>
         <p className="text-sm leading-6 text-[var(--muted)] sm:text-base">
-          Pick a sample image or upload your own photo. You&apos;ll get {4} captions in different humor styles; rate them and
-          your humor profile learns from it.
+          Got a funny photo? Upload it and the AI writes {4} captions in different humor styles. Rate them and your humor
+          profile learns from it.
         </p>
         <p className="text-sm leading-6 text-[var(--muted)]">
           {personalizationConsent ? (
@@ -102,7 +97,7 @@ export function CaptionLab({ samples, configured, personalizationConsent }: Prop
           ) : (
             <>
               Captions are not personalized.{" "}
-              <Link href="/style-preferences" className="font-semibold underline">Turn on personalization</Link> at the end of the style check.
+              <Link href="/history" className="font-semibold underline">Turn on personalization</Link> in Your history.
             </>
           )}
         </p>
@@ -113,39 +108,19 @@ export function CaptionLab({ samples, configured, personalizationConsent }: Prop
       ) : null}
 
       <section aria-labelledby="pick-heading" className="glass-panel space-y-4 rounded-[24px] p-5 sm:p-6">
-        <h2 id="pick-heading" className="text-lg font-bold">1. Choose an image</h2>
+        <h2 id="pick-heading" className="text-lg font-bold">1. Upload a photo</h2>
         <label className="flex min-h-12 cursor-pointer items-center justify-center rounded-xl border-2 border-dashed border-[var(--panel-border)] px-4 text-sm font-semibold transition hover:border-[var(--accent)]">
           <input type="file" accept="image/jpeg,image/png,image/webp" className="sr-only" onChange={(event) => void onFile(event)} />
-          Upload a photo
+          {selection ? "Choose a different photo" : "Upload a photo"}
         </label>
         <p className="text-xs leading-5 text-[var(--muted)]">
           Your photo is resized in your browser and sent to OpenAI to write the captions. FunnyStudy does not store the photo,
           only the captions and your ratings. Please don&apos;t upload photos of people who haven&apos;t agreed to it.
         </p>
-        <div>
-          <p className="mb-2 text-sm font-semibold">Or use a sample</p>
-          <ul className="grid grid-cols-4 gap-2 sm:grid-cols-6">
-            {samples.map((sample) => {
-              const active = selection?.source === "style_pair" && selection.pairId === sample.pairId;
-              return (
-                <li key={sample.pairId}>
-                  <button
-                    type="button"
-                    aria-pressed={active}
-                    aria-label={`Sample image ${sample.pairId}`}
-                    onClick={() => choose({ source: "style_pair", pairId: sample.pairId, preview: sample.imageUrl })}
-                    className={`block aspect-square w-full overflow-hidden rounded-xl border-2 bg-[var(--surface-muted)] transition ${
-                      active ? "border-[var(--accent-strong)]" : "border-transparent hover:border-[var(--accent)]"
-                    }`}
-                  >
-                    {/* eslint-disable-next-line @next/next/no-img-element -- whole external sample images */}
-                    <img src={sample.imageUrl} alt="" className="h-full w-full object-contain" />
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        </div>
+        {selection ? (
+          // eslint-disable-next-line @next/next/no-img-element -- whole uploaded photo preview
+          <img src={selection.dataUrl} alt="Your photo" className="max-h-48 w-full rounded-xl bg-[var(--surface-muted)] object-contain" />
+        ) : null}
         <button
           type="button"
           disabled={!configured || !selection || pending}
@@ -191,7 +166,7 @@ export function CaptionLab({ samples, configured, personalizationConsent }: Prop
             <p className="text-xs text-[var(--muted)]">{droppedCount} caption{droppedCount === 1 ? " was" : "s were"} left out by our safety check.</p>
           ) : null}
           {/* eslint-disable-next-line @next/next/no-img-element -- whole image, captions above it */}
-          <img src={selection.preview} alt="" className="max-h-[40svh] w-full rounded-2xl border border-[var(--panel-border)] bg-[var(--surface-muted)] object-contain" />
+          <img src={selection.dataUrl} alt="" className="max-h-[40svh] w-full rounded-2xl border border-[var(--panel-border)] bg-[var(--surface-muted)] object-contain" />
         </section>
       ) : null}
     </div>

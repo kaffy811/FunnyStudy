@@ -17,7 +17,7 @@ export async function saveHumorSummary(summary: string): Promise<SummaryActionRe
 
   const { error } = await supabase
     .from("profile_humor_summaries")
-    .upsert({ profile_id: user.id, summary: text }, { onConflict: "profile_id" });
+    .upsert({ profile_id: user.id, summary: text, source: "user" }, { onConflict: "profile_id" });
   if (error) {
     console.error("[saveHumorSummary] upsert failed", error);
     return { success: false, error: "We couldn't save your summary. Please try again." };

@@ -5,6 +5,7 @@ import { ArrowRightIcon } from "@heroicons/react/24/outline";
 
 import { AccountMenu } from "@/components/AccountMenu";
 import { LocalDateTime } from "@/components/LocalDateTime";
+import { isCurrentStudy } from "@/lib/ai-study";
 import { SubmitButton } from "@/components/SubmitButton";
 import { ThemeMenu } from "@/components/theme/ThemeMenu";
 import { buildDemographicsPath, hasPendingDemographicQuestions } from "@/lib/demographics";
@@ -95,6 +96,14 @@ export default async function Home({
   const { participations, error: participationError } = await fetchStudyParticipations(
     supabase, user.id, activeStudyIdentities.map((study) => study.id)
   );
+  const { data: latestAiStudy } = await supabase
+    .from("ai_study_sessions")
+    .select("id, created_datetime_utc, ended_datetime_utc")
+    .eq("profile_id", user.id)
+    .order("created_datetime_utc", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const aiStudyInProgress = isCurrentStudy(latestAiStudy, user.last_sign_in_at);
   const participationByStudy = new Map(participations.map((row) => [row.study_id, row]));
   if (participationError) {
     console.error("[Home] load study participation failed", participationError);
@@ -109,25 +118,42 @@ export default async function Home({
         id="home-content"
         className="relative mx-auto min-h-0 w-full max-w-3xl flex-1 overflow-y-auto overscroll-contain p-1"
       >
+        <Link
+          href="/ai-study"
+          prefetch={false}
+          className="glass-panel mb-8 flex items-center gap-4 rounded-[28px] border-2 border-[var(--accent)] p-6 transition hover:bg-[var(--surface-muted)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent-strong)] sm:p-8"
+        >
+          <div className="min-w-0 flex-1 space-y-2">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[var(--soft)]">
+              {aiStudyInProgress ? "In progress" : "New for this visit"}
+            </p>
+            <h1 className="text-2xl font-black sm:text-3xl">{aiStudyInProgress ? "Continue your study" : "Start a new study"}</h1>
+            <p className="text-sm leading-6 text-[var(--muted)] sm:text-base">
+              About 10 random images, each with a fresh AI-written caption. Tap Funny on the ones you like; when you finish,
+              the AI updates your humor profile.
+            </p>
+          </div>
+          <ArrowRightIcon aria-hidden className="h-6 w-6 shrink-0 text-[var(--accent-strong)]" />
+        </Link>
         {activeStudyIdentitiesError ? (
           <div className="glass-panel rounded-2xl p-6 text-center sm:p-8">
-            <h1 className="text-2xl font-bold text-[var(--error-text)]">
+            <h2 className="text-2xl font-bold text-[var(--error-text)]">
               We couldn&apos;t load studies
-            </h1>
+            </h2>
             <p className="mt-3 text-sm text-[var(--muted)]">
               Please refresh and try again.
             </p>
           </div>
         ) : activeStudyIdentities.length === 0 ? (
           <div className="glass-panel rounded-2xl p-6 text-center sm:p-8">
-            <h1 className="text-2xl font-bold sm:text-3xl">No active studies</h1>
+            <h2 className="text-2xl font-bold sm:text-3xl">No active studies</h2>
           </div>
         ) : (
           <>
             <header className="mb-6 space-y-2 sm:mb-8">
-              <h1 className="text-3xl font-bold sm:text-4xl">Active studies</h1>
+              <h2 className="text-2xl font-bold sm:text-3xl">Active studies</h2>
               <p className="text-sm text-[var(--muted)] sm:text-base">
-                Choose a study to start rating captions.
+                Research studies from the Humor Project team.
               </p>
             </header>
             {participationError ? (
@@ -182,27 +208,14 @@ export default async function Home({
           </>
         )}
         <Link
-          href="/style-preferences"
+          href="/caption-lab"
           prefetch={false}
           className="glass-panel mt-6 flex items-center gap-4 rounded-2xl p-5 transition hover:border-[var(--accent)] hover:bg-[var(--surface-muted)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent-strong)] sm:p-6"
         >
           <div className="min-w-0 flex-1 space-y-1">
-            <h2 className="text-lg font-semibold sm:text-xl">Humor style check</h2>
-            <p className="text-sm leading-6 text-[var(--muted)]">
-              Compare caption pairs and tell us which kinds of jokes you like. About 2 minutes.
-            </p>
-          </div>
-          <ArrowRightIcon aria-hidden className="h-5 w-5 shrink-0 text-[var(--accent-strong)]" />
-        </Link>
-        <Link
-          href="/caption-lab"
-          prefetch={false}
-          className="glass-panel mt-3 flex items-center gap-4 rounded-2xl p-5 transition hover:border-[var(--accent)] hover:bg-[var(--surface-muted)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent-strong)] sm:p-6"
-        >
-          <div className="min-w-0 flex-1 space-y-1">
             <h2 className="text-lg font-semibold sm:text-xl">Caption lab</h2>
             <p className="text-sm leading-6 text-[var(--muted)]">
-              Upload a photo or pick a sample and let the AI write captions in different humor styles.
+              Upload a funny photo of your own and let the AI caption it in different humor styles.
             </p>
           </div>
           <ArrowRightIcon aria-hidden className="h-5 w-5 shrink-0 text-[var(--accent-strong)]" />
@@ -215,7 +228,7 @@ export default async function Home({
           <div className="min-w-0 flex-1 space-y-1">
             <h2 className="text-lg font-semibold sm:text-xl">Your history</h2>
             <p className="text-sm leading-6 text-[var(--muted)]">
-              See your past studies and answers, and review or edit your humor profile.
+              See your past studies, and review or edit your humor profile.
             </p>
           </div>
           <ArrowRightIcon aria-hidden className="h-5 w-5 shrink-0 text-[var(--accent-strong)]" />

@@ -22,7 +22,7 @@ export type GenerateResult =
   | { success: true; captions: LabCaption[]; personalized: boolean; droppedCount: number }
   | { success: false; error: string };
 
-type GenerateInput = { source: "upload"; dataUrl: string } | { source: "style_pair"; pairId: number };
+type GenerateInput = { source: "upload"; dataUrl: string };
 
 export async function generateLabCaptions(input: GenerateInput): Promise<GenerateResult> {
   const config = openAiConfig();
@@ -32,26 +32,11 @@ export async function generateLabCaptions(input: GenerateInput): Promise<Generat
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { success: false, error: "Please sign in to continue." };
 
-  // Image: an uploaded photo (sent to OpenAI, never stored) or a sample image.
-  let imageUrl: string;
-  let storedImageUrl: string | null = null;
-  if (input?.source === "upload") {
-    if (!isValidUploadDataUrl(input.dataUrl)) {
-      return { success: false, error: "Please choose a JPEG, PNG or WebP image under about 650 KB after resizing." };
-    }
-    imageUrl = input.dataUrl;
-  } else if (input?.source === "style_pair" && Number.isSafeInteger(input.pairId) && input.pairId > 0) {
-    const { data: pair } = await supabase
-      .from("style_comparison_pairs")
-      .select("image_url")
-      .eq("id", input.pairId)
-      .maybeSingle();
-    if (!pair?.image_url) return { success: false, error: "That sample image isn't available." };
-    imageUrl = pair.image_url;
-    storedImageUrl = pair.image_url;
-  } else {
-    return { success: false, error: "Please choose an image first." };
+  // The uploaded photo is sent to OpenAI and never stored.
+  if (input?.source !== "upload" || !isValidUploadDataUrl(input.dataUrl)) {
+    return { success: false, error: "Please choose a JPEG, PNG or WebP image under about 650 KB after resizing." };
   }
+  const imageUrl = input.dataUrl;
 
   // Rolling 24h limit per participant, checked before any paid API call.
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
@@ -92,7 +77,7 @@ export async function generateLabCaptions(input: GenerateInput): Promise<Generat
 
   let captions;
   try {
-    if (input.source === "upload" && (await moderateImage(config.apiKey, imageUrl))) {
+    if (await moderateImage(config.apiKey, imageUrl)) {
       return { success: false, error: "We can't write captions for that image. Please try a different one." };
     }
     const content = await createChatCompletion({
@@ -120,8 +105,8 @@ export async function generateLabCaptions(input: GenerateInput): Promise<Generat
       captions.map((caption) => ({
         profile_id: user.id,
         batch_id: batchId,
-        image_source: input.source,
-        image_url: storedImageUrl,
+        image_source: "upload",
+        image_url: null,
         style_id: bySlug.get(caption.styleSlug)!.id,
         caption: caption.text,
         personalized,

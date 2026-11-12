@@ -16,6 +16,7 @@
     "test:settings": "node --test tests/settings.test.mjs",
     "test:style-preferences": "node --test tests/style-preferences.test.mjs",
     "test:captions": "node --test tests/caption-generation.test.mjs",
+    "test:ai-study": "node --test tests/ai-study.test.mjs",
     "preview:settings": "node tests/fixtures/settings-preview.mjs",
     "study-email": "node --env-file=.env.local scripts/study-email.mjs",
     "study-sms": "node --env-file=.env.local scripts/study-sms.mjs",

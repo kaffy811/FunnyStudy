@@ -8,10 +8,12 @@ import { HUMOR_SUMMARY_MAX } from "@/lib/humor-summary";
 type Props = {
   generated: string;
   saved: string | null;
+  savedSource?: "user" | "ai" | null;
 };
 
-export function HumorSummaryEditor({ generated, saved }: Props) {
+export function HumorSummaryEditor({ generated, saved, savedSource = "user" }: Props) {
   const [current, setCurrent] = useState(saved);
+  const [source, setSource] = useState(savedSource);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(saved ?? generated);
   const [pending, setPending] = useState(false);
@@ -26,6 +28,7 @@ export function HumorSummaryEditor({ generated, saved }: Props) {
     setPending(false);
     if (!result.success) return setError(result.error);
     setCurrent(draft.trim());
+    setSource("user");
     setEditing(false);
     setNotice("Saved.");
   }
@@ -45,7 +48,7 @@ export function HumorSummaryEditor({ generated, saved }: Props) {
   return (
     <div className="space-y-3">
       <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--soft)]">
-        {current ? "Edited by you" : "Generated from your answers"}
+        {current ? (source === "ai" ? "Written by AI after your last study" : "Edited by you") : "Generated from your ratings"}
       </p>
       {editing ? (
         <label className="block">

@@ -292,6 +292,7 @@ function createScenario({
           return query;
         },
         order: (key) => { orderBy = key; return query; },
+        limit: () => query,
         single: async () => ({ ...result(), data: result().data?.[0] ?? null }),
         maybeSingle: async () => ({ ...result(), data: result().data?.[0] ?? null }),
         then: (resolve, reject) => Promise.resolve(result()).then(resolve, reject),
@@ -318,6 +319,7 @@ function createScenario({
     "@/components/theme/ThemeMenu": { ThemeMenu: NullComponent },
     "@/components/DemographicQuestionCard": { DemographicQuestionCard: NullComponent },
     "@/lib/caption-images": { resolveStudyCaptionImageUrl: () => null },
+    "@/lib/ai-study": loadModule("src/lib/ai-study.ts"),
   };
   imports["@/lib/studies"] = {
     ...studiesModule,
@@ -507,7 +509,8 @@ test("only private, upcoming, or expired studies produce the exact empty-state c
     ],
   });
   const html = renderToStaticMarkup(await scenario.home({}));
-  assert.match(html, />No active studies<\/h1>/);
+  assert.match(html, />No active studies<\/h2>/);
+  assert.match(html, /href="\/ai-study"/);
   assert.doesNotMatch(html, /href="\/study\//);
 });
 
