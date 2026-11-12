@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
+  ClockIcon,
   Cog6ToothIcon,
   ComputerDesktopIcon,
   MoonIcon,
@@ -136,6 +137,16 @@ export function AccountMenu({
             </div>
           </div>
           <div className="mt-5 space-y-2">
+            <Link
+              href="/history"
+              prefetch={false}
+              role="menuitem"
+              onClick={() => setOpen(false)}
+              className="flex w-full items-center justify-center gap-2 rounded-xl border border-[var(--panel-border)] bg-[var(--surface-muted)] px-4 py-2 text-sm font-semibold text-[var(--foreground)] transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent-strong)]"
+            >
+              <ClockIcon className="h-4 w-4" aria-hidden />
+              History
+            </Link>
             <Link
               href="/settings"
               prefetch={false}

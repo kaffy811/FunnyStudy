@@ -104,6 +104,10 @@ applied in the target Supabase project (run it once in the SQL Editor). Data
 lands in `style_preference_responses` and `style_preference_feedback`; pure
 helpers are covered by `npm run test:style-preferences`.
 
+`/history` shows a participant's studies, latest style-check answers and an
+editable humor preference summary. It needs
+`supabase/migrations/20261113010000_add_profile_humor_summaries.sql`.
+
 
 
 ## Funny Study Images

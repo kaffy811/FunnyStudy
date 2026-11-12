@@ -10,19 +10,29 @@ import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
-function shuffled<T>(items: readonly T[]) {
-  const copy = [...items];
-  for (let i = copy.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [copy[i], copy[j]] = [copy[j], copy[i]];
-  }
-  return copy;
+/** Small deterministic PRNG (mulberry32) seeded from a string. */
+function seededRandom(seed: string) {
+  let h = 2166136261;
+  for (let i = 0; i < seed.length; i += 1) h = Math.imul(h ^ seed.charCodeAt(i), 16777619);
+  return () => {
+    h = (h + 0x6d2b79f5) | 0;
+    let t = Math.imul(h ^ (h >>> 15), 1 | h);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
 }
 
-// Order and left/right placement are randomized per request on the server so
-// the client renders exactly what was decided here (no hydration mismatch).
-function randomizedItems(pairs: readonly StylePair[]): StylePairItem[] {
-  return shuffled(pairs).map((pair) => ({ pair, aShownFirst: Math.random() < 0.5 }));
+// Order and left/right placement are randomized per participant but stay the
+// same on every visit, so "Previous" and the n/total counter keep their meaning.
+// Decided on the server so the client renders exactly this (no hydration mismatch).
+function orderedItems(pairs: readonly StylePair[], profileId: string): StylePairItem[] {
+  const random = seededRandom(`style-check:${profileId}`);
+  const copy = [...pairs];
+  for (let i = copy.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy.map((pair) => ({ pair, aShownFirst: random() < 0.5 }));
 }
 
 export default async function StylePreferencesPage() {
@@ -38,7 +48,7 @@ export default async function StylePreferencesPage() {
   const displayName =
     [profile?.first_name, profile?.last_name].filter(Boolean).join(" ").trim() || user.email || "your account";
 
-  const items = state ? randomizedItems(state.pairs) : [];
+  const items = state ? orderedItems(state.pairs, user.id) : [];
 
   return (
     <div className="relative flex h-[100svh] min-h-[100svh] flex-col overflow-hidden px-4 py-3 text-[var(--foreground)] sm:px-6 sm:py-4">

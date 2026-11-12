@@ -62,3 +62,48 @@ test("parseStyleFeedback rejects overlap, unknown ids, long comments and bad sha
   assert.equal(parseStyleFeedback({ ...base, personalizationConsent: "yes" }, [1, 2, 3]), null);
   assert.equal(parseStyleFeedback(null, [1, 2, 3]), null);
 });
+
+const { generateHumorSummary, parseHumorSummary } = loadModule("src/lib/humor-summary.ts");
+const named = [
+  { id: 1, slug: "playful", name: "Playful", description: "" },
+  { id: 2, slug: "sarcastic", name: "Sarcastic", description: "" },
+  { id: 3, slug: "absurd", name: "Absurd", description: "" },
+];
+
+test("generateHumorSummary invites a first attempt when there is no data", () => {
+  const text = generateHumorSummary({ tally: [], styles: named, choices: {}, totalPairs: 12, feedback: null });
+  assert.match(text, /haven't taken the humor style check/);
+});
+
+test("generateHumorSummary names favorites, passes, feedback and partial progress", () => {
+  const pairs = [pair(1, 1, 2), pair(2, 1, 3), pair(3, 2, 3), pair(4, 1, 2)];
+  const choices = { 1: "a", 2: "a", 3: "b", 4: "a" };
+  const text = generateHumorSummary({
+    tally: tallyStyles(named, pairs, choices),
+    styles: named,
+    choices,
+    totalPairs: 12,
+    feedback: { likedStyleIds: [3], dislikedStyleIds: [2], comment: "More puns", personalizationConsent: false },
+  });
+  assert.match(text, /You tend to pick playful captions\./);
+  assert.match(text, /You usually pass on sarcastic humor\./);
+  assert.match(text, /You said you enjoy absurd humor\./);
+  assert.match(text, /You'd rather not see sarcastic humor\./);
+  assert.match(text, /Your note: "More puns"/);
+  assert.match(text, /Based on 4 of 12 comparisons/);
+});
+
+test("generateHumorSummary notes frequent Neither/No preference answers", () => {
+  const pairs = [pair(1, 1, 2), pair(2, 1, 3), pair(3, 2, 3)];
+  const choices = { 1: "neither", 2: "no_preference", 3: "a" };
+  const text = generateHumorSummary({ tally: tallyStyles(named, pairs, choices), styles: named, choices, totalPairs: 3, feedback: null });
+  assert.match(text, /often chose Neither or No preference/);
+  assert.doesNotMatch(text, /Based on/);
+});
+
+test("parseHumorSummary trims and enforces 1..1000 characters", () => {
+  assert.equal(parseHumorSummary("  I like puns  "), "I like puns");
+  assert.equal(parseHumorSummary("   "), null);
+  assert.equal(parseHumorSummary("x".repeat(1001)), null);
+  assert.equal(parseHumorSummary(5), null);
+});

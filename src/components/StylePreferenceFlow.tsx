@@ -24,6 +24,13 @@ type Props = {
 
 type Phase = "intro" | "pair" | "summary";
 
+const CHOICE_LABELS: Record<StyleChoice, string> = {
+  a: "picked",
+  b: "picked",
+  neither: "neither",
+  no_preference: "no pref",
+};
+
 const inputMethodFor = (event: MouseEvent) => (event.detail === 0 ? "keyboard" : "button");
 
 export function StylePreferenceFlow({ items, styles, initialChoices, initialFeedback }: Props) {
@@ -34,6 +41,7 @@ export function StylePreferenceFlow({ items, styles, initialChoices, initialFeed
   const [index, setIndex] = useState(firstUnanswered === -1 ? 0 : firstUnanswered);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [listOpen, setListOpen] = useState(false);
   const shownAt = useRef(0);
   const heading = useRef<HTMLHeadingElement>(null);
 
@@ -71,8 +79,18 @@ export function StylePreferenceFlow({ items, styles, initialChoices, initialFeed
       setError(result.error);
       return;
     }
-    if (index + 1 < items.length) setIndex(index + 1);
+    const answered = { ...choices, [pairId]: choice };
+    const nextUnanswered = items.findIndex(({ pair }, i) => i > index && !answered[pair.id]);
+    const anyUnanswered = items.findIndex(({ pair }) => !answered[pair.id]);
+    if (index + 1 < items.length) setIndex(nextUnanswered === -1 ? index + 1 : nextUnanswered);
+    else if (anyUnanswered !== -1) setIndex(anyUnanswered);
     else setPhase("summary");
+  }
+
+  function goTo(target: number) {
+    setError(null);
+    setListOpen(false);
+    setIndex(target);
   }
 
   if (phase === "intro") {
@@ -139,10 +157,39 @@ export function StylePreferenceFlow({ items, styles, initialChoices, initialFeed
         <h1 id="style-pair-heading" ref={heading} tabIndex={-1} className="text-lg font-bold outline-none sm:text-xl">
           Which caption do you prefer?
         </h1>
-        <span className="shrink-0 text-sm font-semibold text-[var(--muted)]" aria-live="polite">
-          {index + 1}/{items.length}
-        </span>
+        <button
+          type="button"
+          aria-expanded={listOpen}
+          aria-controls="style-pair-list"
+          onClick={() => setListOpen((open) => !open)}
+          className="shrink-0 rounded-full border border-[var(--panel-border)] px-3 py-1.5 text-sm font-semibold text-[var(--muted)] transition hover:border-[var(--accent)]"
+        >
+          <span aria-live="polite">{index + 1}/{items.length}</span> · {answeredCount} answered {listOpen ? "▲" : "▼"}
+        </button>
       </div>
+      {listOpen ? (
+        <ol id="style-pair-list" aria-label="All comparisons" className="grid grid-cols-4 gap-2 rounded-2xl border border-[var(--panel-border)] p-3 sm:grid-cols-6">
+          {items.map(({ pair: listed }, i) => {
+            const answer = choices[listed.id];
+            return (
+              <li key={listed.id}>
+                <button
+                  type="button"
+                  onClick={() => goTo(i)}
+                  aria-current={i === index ? "step" : undefined}
+                  aria-label={`Comparison ${i + 1}: ${answer ? `answered, ${CHOICE_LABELS[answer]}` : "not answered"}`}
+                  className={`flex min-h-12 w-full flex-col items-center justify-center rounded-xl border text-sm font-semibold transition ${
+                    i === index ? "border-[var(--accent-strong)] ring-2 ring-[var(--accent)]" : "border-[var(--panel-border)]"
+                  } ${answer ? "bg-[var(--surface-muted)]" : ""}`}
+                >
+                  {i + 1}
+                  <span className="text-[10px] font-medium text-[var(--muted)]">{answer ? CHOICE_LABELS[answer] : "—"}</span>
+                </button>
+              </li>
+            );
+          })}
+        </ol>
+      ) : null}
       <div className="grid gap-3 sm:grid-cols-2">
         {options.map(({ choice, text }, position) => (
           <button
@@ -176,16 +223,16 @@ export function StylePreferenceFlow({ items, styles, initialChoices, initialFeed
       <div className="flex items-center justify-between gap-3 pt-1">
         <button
           type="button"
-          onClick={() => (index === 0 ? setPhase("intro") : setIndex(index - 1))}
+          onClick={() => (index === 0 ? setPhase("intro") : goTo(index - 1))}
           className="min-h-12 rounded-xl border border-[var(--panel-border)] px-4 text-sm font-semibold"
         >
           ↑ Previous
         </button>
-        {selected && index + 1 < items.length ? (
-          <button type="button" onClick={() => setIndex(index + 1)} className="min-h-12 rounded-xl border border-[var(--panel-border)] px-4 text-sm font-semibold">
-            Next ↓
+        {index + 1 < items.length ? (
+          <button type="button" onClick={() => goTo(index + 1)} className="min-h-12 rounded-xl border border-[var(--panel-border)] px-4 text-sm font-semibold">
+            {selected ? "Next ↓" : "Skip for now ↓"}
           </button>
-        ) : selected && allAnswered ? (
+        ) : allAnswered ? (
           <button type="button" onClick={() => setPhase("summary")} className="min-h-12 rounded-xl bg-[var(--accent)] px-4 text-sm font-semibold text-[var(--accent-contrast)]">
             See results
           </button>
