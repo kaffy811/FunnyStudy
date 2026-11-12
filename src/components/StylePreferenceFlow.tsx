@@ -143,12 +143,6 @@ export function StylePreferenceFlow({ items, styles, initialChoices, initialFeed
           {index + 1}/{items.length}
         </span>
       </div>
-      {/* eslint-disable-next-line @next/next/no-img-element -- caption images are rendered whole from external hosts, like the study flow */}
-      <img
-        src={pair.imageUrl}
-        alt=""
-        className="max-h-[38svh] w-full rounded-2xl border border-[var(--panel-border)] bg-[var(--surface-muted)] object-contain"
-      />
       <div className="grid gap-3 sm:grid-cols-2">
         {options.map(({ choice, text }, position) => (
           <button
@@ -164,6 +158,12 @@ export function StylePreferenceFlow({ items, styles, initialChoices, initialFeed
           </button>
         ))}
       </div>
+      {/* eslint-disable-next-line @next/next/no-img-element -- caption images are rendered whole from external hosts, like the study flow */}
+      <img
+        src={pair.imageUrl}
+        alt=""
+        className="max-h-[38svh] w-full rounded-2xl border border-[var(--panel-border)] bg-[var(--surface-muted)] object-contain"
+      />
       <div className="flex gap-3">
         <button type="button" disabled={saving} aria-pressed={selected === "neither"} onClick={(event) => choose("neither", event)} className={secondaryClass(selected === "neither")}>
           Neither
