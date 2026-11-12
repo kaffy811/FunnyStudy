@@ -28,6 +28,7 @@ Purpose: Quick orientation for anyone editing the project. Keep this file curren
 - Caption flow adds labeled, centered likes and up/down arrow buttons with accessible labels. Progress opens a native modal containing only captions viewed during the current visit; reload resets this list. History jumps retain the current shuffled queue and do not create forward-navigation telemetry.
 - Review pauses caption timers, traps focus through the native dialog, closes with Escape/Close, and restores focus. Mobile navigation sits above account controls; full images and existing gestures remain.
 - Completion summary displays seconds rounded to one decimal and explains ratios/non-likes without changing saved calculations or snapshots. No dislike category or database migrations were introduced.
+- P0 polish (2026-11-12): the inline like button reads `Funny` (`Liked · undo` once liked); the review list shows no status for unliked captions and a small heart + `Liked` for liked ones. Production runs on Vercel (see README); `amplify.yml` is historical. PM review checklist: `docs/pm-review-v1.md`.
 - Isolated synthetic UI check: `node tests/fixtures/iteration-preview.mjs` on 127.0.0.1:3016; it copies components to a temporary app with stubbed server actions and never uses live credentials. Preview fixtures now show the 22 public teaching image-caption pairs from Study 122; saves remain simulated.
 
 ## Setup and commands

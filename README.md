@@ -25,9 +25,43 @@ The app redirects unauthenticated users to `/login`, offers “Sign in with Goog
 - The `/auth/login` handler sends Supabase a clean callback URL (`/auth/callback`) with no query params so it matches the allowlist exactly. The `next` path is stored in a temporary cookie and read in `/auth/callback` before redirecting to the final page. The callback route uses `NEXT_PUBLIC_SITE_URL` for the post-login redirect origin in deployed environments because Amplify SSR can report an internal localhost origin while handling `/auth/callback`.
 - Ensure the Supabase Redirect URLs include the exact callback paths you use (e.g., `http://localhost:3000/auth/callback`, `https://localhost:3000/auth/callback`, plus production callbacks). If you add query params to the allowlist in Supabase, keep them consistent.
 
-## Deploy on AWS
+## Deploy on Vercel (current production)
 
-This app is ready for AWS Amplify Hosting through a console-managed GitHub App
+Production runs on Vercel: project `funny-study` in the `humor-project8` team,
+served at https://funny-study-two.vercel.app from the `main` branch of
+`kaffy811/FunnyStudy`. Every push to `main` deploys to production; other
+branches get preview deployments.
+
+One-time setup (already done for the current project):
+
+1. Grant the Vercel GitHub App access to the repository. If the app is set to
+   "Only select repositories", add the repo at
+   `https://github.com/settings/installations` -> Vercel -> Configure; otherwise
+   Vercel's import fails with "you need to install the GitHub integration first".
+2. Import the repo in Vercel. The framework preset is detected as Next.js; Node
+   24 is taken from `package.json` `engines`.
+3. Set the environment variables below for Production and Preview. The CLI is
+   the most reliable way:
+   ```
+   npx vercel link --project funny-study --scope humor-project8
+   printf '%s' "<value>" | npx vercel env add NEXT_PUBLIC_SUPABASE_URL production
+   ```
+4. Redeploy after changing any variable: `NEXT_PUBLIC_*` values are inlined at
+   build time.
+5. Add `https://<production-domain>/auth/callback` to Supabase ->
+   Authentication -> URL Configuration -> Redirect URLs.
+
+Required Vercel environment variables:
+
+- `NEXT_PUBLIC_SITE_URL` (the production domain, e.g. `https://funny-study-two.vercel.app`)
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` or `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+- `NEXT_PUBLIC_GOOGLE_CLIENT_ID`
+
+## Deploy on AWS (historical)
+
+Not used by the current production deployment; kept for reference. This app is
+ready for AWS Amplify Hosting through a console-managed GitHub App
 connection. Amplify uses the committed root `amplify.yml` build spec.
 
 One-time setup:

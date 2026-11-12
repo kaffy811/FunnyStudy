@@ -1762,7 +1762,7 @@ function HeartVoteButton({
             }
           />
         </span>
-        {isInline ? <span className="text-sm font-semibold">{isPending ? "Saving…" : hasCurrentSavedVote ? "Liked · undo" : "Funny · Like"}</span> : null}
+        {isInline ? <span className="text-sm font-semibold">{isPending ? "Saving…" : hasCurrentSavedVote ? "Liked · undo" : "Funny"}</span> : null}
       </button>
       {shouldBurst && burstOrigin ? (
         <HeartBurstViewportOverlay

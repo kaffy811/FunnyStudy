@@ -1,5 +1,6 @@
 "use client";
 
+import { HeartIcon } from "@heroicons/react/24/solid";
 import { useEffect, useRef } from "react";
 import type { CaptionForVote } from "./CaptionVoteFlow";
 
@@ -34,7 +35,7 @@ export function CaptionReviewDialog({ captions, currentIndex, voteStatuses, vote
           return <li key={caption.id} className="mb-2">
             <button type="button" aria-current={index === currentIndex ? "true" : undefined} onClick={() => onSelect(index)} className={`flex min-h-20 w-full items-center gap-3 rounded-xl border p-3 text-left focus-visible:outline-2 focus-visible:outline-[var(--accent)] ${index === currentIndex ? "border-[var(--accent)]" : "border-[var(--panel-border)]"}`}>
               {caption.imageSrc ? <img src={caption.imageSrc} alt="" loading="lazy" className="h-14 w-14 shrink-0 rounded-lg object-contain" /> : <span className="w-14 shrink-0 text-center text-sm">Text</span>}
-              <span className="min-w-0"><span className="block text-xs text-[var(--muted)]">Caption {index + 1}{index === currentIndex ? " · Current" : ""} · {pending ? "Saving…" : liked ? "Liked" : "No like selected"}</span><span className="mt-1 line-clamp-2 block text-sm">{caption.content || "No caption text"}</span></span>
+              <span className="min-w-0"><span className="flex items-center gap-1 text-xs text-[var(--muted)]">Caption {index + 1}{index === currentIndex ? " · Current" : ""}{pending ? " · Saving…" : liked ? <> · <HeartIcon aria-hidden className="h-3.5 w-3.5 text-[var(--heart-active)]" /> Liked</> : null}</span><span className="mt-1 line-clamp-2 block text-sm">{caption.content || "No caption text"}</span></span>
             </button>
           </li>;
         })}
