@@ -14,6 +14,15 @@ import { createClient } from "@/lib/supabase/server";
 export const dynamic = "force-dynamic";
 
 type Participation = { study_id: number; started_at: string; ended_at: string | null; completion_stats: unknown };
+type LabRow = {
+  id: number;
+  style_id: number;
+  caption: string;
+  rating: number | null;
+  image_url: string | null;
+  personalized: boolean;
+  created_datetime_utc: string;
+};
 type AnswerRow = { pair_id: number; choice: StyleChoice; created_datetime_utc: string };
 
 const sectionClass = "glass-panel rounded-[24px] p-5 sm:p-6";
@@ -23,7 +32,7 @@ export default async function HistoryPage() {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
-  const [{ data: profile }, styleCheck, participations, answers, savedSummary] = await Promise.all([
+  const [{ data: profile }, styleCheck, participations, answers, savedSummary, labCaptions] = await Promise.all([
     supabase.from("profiles").select("first_name, last_name").eq("id", user.id).single(),
     fetchStyleCheckState(supabase, user.id),
     supabase
@@ -38,12 +47,20 @@ export default async function HistoryPage() {
       .order("created_datetime_utc", { ascending: false })
       .order("id", { ascending: false }),
     supabase.from("profile_humor_summaries").select("summary").eq("profile_id", user.id).maybeSingle(),
+    supabase
+      .from("ai_generated_captions")
+      .select("id, style_id, caption, rating, image_url, personalized, created_datetime_utc")
+      .eq("profile_id", user.id)
+      .order("created_datetime_utc", { ascending: false })
+      .order("id", { ascending: false })
+      .limit(200),
   ]);
   for (const [label, error] of [
     ["style check", styleCheck.error],
     ["participations", participations.error],
     ["answers", answers.error],
     ["summary", savedSummary.error],
+    ["lab captions", labCaptions.error],
   ] as const) {
     if (error) console.error(`[HistoryPage] load ${label} failed`, error);
   }
@@ -51,6 +68,11 @@ export default async function HistoryPage() {
   const displayName =
     [profile?.first_name, profile?.last_name].filter(Boolean).join(" ").trim() || user.email || "your account";
   const state = styleCheck.state;
+  const lab = (labCaptions.data ?? []) as LabRow[];
+  const labRatings = lab
+    .filter((row): row is LabRow & { rating: -1 | 1 } => row.rating === 1 || row.rating === -1)
+    .map((row) => ({ styleId: row.style_id, rating: row.rating }));
+  const styleNames = new Map((state?.styles ?? []).map((style) => [style.id, style.name]));
   const tally = state ? tallyStyles(state.styles, state.pairs, state.choices) : [];
   const generated = state
     ? generateHumorSummary({
@@ -59,6 +81,7 @@ export default async function HistoryPage() {
         choices: state.choices,
         totalPairs: state.pairs.length,
         feedback: state.feedback,
+        labRatings,
       })
     : null;
 
@@ -198,6 +221,44 @@ export default async function HistoryPage() {
                   </li>
                 );
               })}
+            </ul>
+          )}
+        </section>
+
+        <section aria-labelledby="lab-heading" className={sectionClass}>
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h2 id="lab-heading" className="text-xl font-bold">AI captions</h2>
+            <Link href="/caption-lab" className="text-sm font-semibold underline">Open the caption lab</Link>
+          </div>
+          {labCaptions.error ? (
+            <p className="mt-3 text-sm text-[var(--error-text)]">We couldn&apos;t load your AI captions.</p>
+          ) : lab.length === 0 ? (
+            <p className="mt-3 text-sm text-[var(--muted)]">You haven&apos;t generated any captions yet.</p>
+          ) : (
+            <ul className="mt-4 space-y-3">
+              {lab.slice(0, 20).map((row) => (
+                <li key={row.id} className="flex gap-3 rounded-2xl border border-[var(--panel-border)] p-3">
+                  <div className="min-w-0 flex-1 space-y-1 text-sm">
+                    <p className="font-semibold leading-6">{row.caption}</p>
+                    <p className="text-xs text-[var(--muted)]">
+                      {styleNames.get(row.style_id) ?? "Unknown style"}
+                      {row.personalized ? " · personalized" : ""}
+                      {" · "}
+                      {row.rating === 1 ? "You found it funny" : row.rating === -1 ? "Not for you" : "Not rated"}
+                      {" · "}
+                      <LocalDateTime value={row.created_datetime_utc} />
+                    </p>
+                  </div>
+                  {row.image_url ? (
+                    // eslint-disable-next-line @next/next/no-img-element -- whole external sample images
+                    <img src={row.image_url} alt="" className="h-16 w-16 shrink-0 rounded-lg bg-[var(--surface-muted)] object-contain" />
+                  ) : (
+                    <span className="flex h-16 w-16 shrink-0 items-center justify-center rounded-lg bg-[var(--surface-muted)] text-center text-[10px] text-[var(--muted)]">
+                      Your photo (not stored)
+                    </span>
+                  )}
+                </li>
+              ))}
             </ul>
           )}
         </section>

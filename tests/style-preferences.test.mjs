@@ -107,3 +107,12 @@ test("parseHumorSummary trims and enforces 1..1000 characters", () => {
   assert.equal(parseHumorSummary("x".repeat(1001)), null);
   assert.equal(parseHumorSummary(5), null);
 });
+
+test("generateHumorSummary reports caption-lab ratings", () => {
+  const text = generateHumorSummary({
+    tally: [], styles: named, choices: {}, totalPairs: 12, feedback: null,
+    labRatings: [{ styleId: 1, rating: 1 }, { styleId: 1, rating: 1 }, { styleId: 2, rating: -1 }],
+  });
+  assert.match(text, /In the caption lab you liked 2 of 3 AI captions, most often playful ones\./);
+  assert.doesNotMatch(text, /haven't taken/);
+});

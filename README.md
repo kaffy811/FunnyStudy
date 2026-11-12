@@ -108,6 +108,15 @@ helpers are covered by `npm run test:style-preferences`.
 editable humor preference summary. It needs
 `supabase/migrations/20261113010000_add_profile_humor_summaries.sql`.
 
+## Caption lab (OpenAI)
+
+`/caption-lab` writes captions for an uploaded photo or a sample image with
+the OpenAI API and lets participants rate them. Set `OPENAI_API_KEY` (and
+optionally `OPENAI_MODEL`, default `gpt-4.1-mini`) as server-only environment
+variables in `.env.local` and in Vercel (Production and Preview), and apply
+`supabase/migrations/20261113020000_add_ai_generated_captions.sql`. Uploaded
+photos are not stored. Tests: `npm run test:captions`.
+
 
 
 ## Funny Study Images

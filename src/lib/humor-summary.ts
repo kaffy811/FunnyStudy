@@ -1,3 +1,4 @@
+import type { LabRating } from "./caption-generation";
 import type { HumorStyle, StyleChoice, StyleFeedback, StyleTally } from "./style-preferences";
 
 export const HUMOR_SUMMARY_MAX = 1000;
@@ -20,11 +21,12 @@ export function generateHumorSummary(input: {
   choices: Record<number, StyleChoice>;
   totalPairs: number;
   feedback: StyleFeedback | null;
+  labRatings?: LabRating[];
 }): string {
-  const { tally, styles, choices, totalPairs, feedback } = input;
+  const { tally, styles, choices, totalPairs, feedback, labRatings = [] } = input;
   const answers = Object.values(choices);
   const answered = answers.length;
-  if (answered === 0 && !feedback) {
+  if (answered === 0 && !feedback && labRatings.length === 0) {
     return "You haven't taken the humor style check yet. Answer a few comparisons and we'll summarize the kinds of jokes you like.";
   }
 
@@ -51,6 +53,16 @@ export function generateHumorSummary(input: {
   const disliked = (feedback?.dislikedStyleIds ?? []).map(name).filter((n): n is string => Boolean(n));
   if (liked.length > 0) sentences.push(`You said you enjoy ${listNames(liked)} humor.`);
   if (disliked.length > 0) sentences.push(`You'd rather not see ${listNames(disliked)} humor.`);
+  if (labRatings.length > 0) {
+    const likes = labRatings.filter((entry) => entry.rating === 1);
+    const perStyle = new Map<number, number>();
+    for (const entry of likes) perStyle.set(entry.styleId, (perStyle.get(entry.styleId) ?? 0) + 1);
+    const [topId, topLikes] = [...perStyle.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0] ?? [];
+    sentences.push(
+      `In the caption lab you liked ${likes.length} of ${labRatings.length} AI captions` +
+        (topId !== undefined && (topLikes ?? 0) >= 2 ? `, most often ${name(topId)} ones.` : ".")
+    );
+  }
   if (feedback?.comment) sentences.push(`Your note: "${feedback.comment}"`);
   if (answered > 0 && answered < totalPairs) sentences.push(`Based on ${answered} of ${totalPairs} comparisons so far.`);
 

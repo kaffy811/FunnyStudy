@@ -195,6 +195,19 @@ export default async function Home({
           <ArrowRightIcon aria-hidden className="h-5 w-5 shrink-0 text-[var(--accent-strong)]" />
         </Link>
         <Link
+          href="/caption-lab"
+          prefetch={false}
+          className="glass-panel mt-3 flex items-center gap-4 rounded-2xl p-5 transition hover:border-[var(--accent)] hover:bg-[var(--surface-muted)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent-strong)] sm:p-6"
+        >
+          <div className="min-w-0 flex-1 space-y-1">
+            <h2 className="text-lg font-semibold sm:text-xl">Caption lab</h2>
+            <p className="text-sm leading-6 text-[var(--muted)]">
+              Upload a photo or pick a sample and let the AI write captions in different humor styles.
+            </p>
+          </div>
+          <ArrowRightIcon aria-hidden className="h-5 w-5 shrink-0 text-[var(--accent-strong)]" />
+        </Link>
+        <Link
           href="/history"
           prefetch={false}
           className="glass-panel mt-3 flex items-center gap-4 rounded-2xl p-5 transition hover:border-[var(--accent)] hover:bg-[var(--surface-muted)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent-strong)] sm:p-6"
