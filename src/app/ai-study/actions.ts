@@ -7,10 +7,12 @@ import {
   AI_STUDY_CANDIDATES,
   AI_STUDY_PROMPT_VERSION,
   AI_STUDY_SIZE,
-  assignStyles,
+  assignStylePairs,
+  choiceRatings,
   buildStudyCaptionMessages,
   buildSummaryMessages,
   chunk,
+  AB_CHOICES,
   DAILY_AI_STUDY_LIMIT,
   fallbackSummary,
   isCurrentStudy,
@@ -19,6 +21,8 @@ import {
   studyCaptionResponseFormat,
   styleStats,
   summaryResponseFormat,
+  pairPositions,
+  type AbChoice,
   type CaptionSignal,
   type StudyStyle,
 } from "@/lib/ai-study";
@@ -99,35 +103,52 @@ export async function startAiStudy(): Promise<Result<{ sessionId: string }>> {
   const personalized = consentRow.data?.personalization_consent === true;
   const profileSummary = personalized ? summaryRow.data?.summary ?? null : null;
 
-  let items: { imageId: string; imageUrl: string; style: StudyStyle; caption: string }[];
+  type Pair = { imageId: string; imageUrl: string; captions: [{ style: StudyStyle; text: string }, { style: StudyStyle; text: string }] };
+  let pairs: Pair[];
   try {
     // Moderate every candidate image, keep the first safe ones.
     const flags = await Promise.all(pool.map((image) => moderateImage(config.apiKey, image.url).catch(() => true)));
     const safe = pool.filter((_, i) => !flags[i]).slice(0, AI_STUDY_SIZE);
     if (safe.length === 0) return { success: false, error: "We couldn't find images for a study right now. Please try again." };
 
-    const styled = assignStyles(styles, safe.length).map((style, i) => ({ slot: i + 1, imageUrl: safe[i].url, imageId: safe[i].id, style }));
+    const planned = assignStylePairs(styles, safe.length).map((stylePair, i) => ({
+      slot: i + 1,
+      imageUrl: safe[i].url,
+      imageId: safe[i].id,
+      styles: stylePair,
+    }));
     const batches = await Promise.all(
-      chunk(styled, AI_STUDY_BATCH_SIZE).map(async (batch) => {
-        const slots = batch.map((item) => item.slot);
+      chunk(planned, AI_STUDY_BATCH_SIZE).map(async (batch) => {
         const content = await createChatCompletion({
           apiKey: config.apiKey,
           model: config.model,
           messages: buildStudyCaptionMessages({ items: batch, profileSummary }),
-          responseFormat: studyCaptionResponseFormat(slots),
+          responseFormat: studyCaptionResponseFormat(
+            batch.map((item) => item.slot),
+            styles.map((style) => style.slug)
+          ),
+          maxTokens: 1500,
         });
-        return parseStudyCaptions(content, slots);
+        return parseStudyCaptions(content, new Map(batch.map((item) => [item.slot, item.styles.map((style) => style.slug)])));
       })
     );
     const texts = new Map(batches.flatMap((map) => [...map.entries()]));
-    const written = styled.filter((item) => texts.has(item.slot)).map((item) => ({ ...item, caption: texts.get(item.slot)! }));
-    const flagged = await moderateTexts(config.apiKey, written.map((item) => item.caption));
-    items = written.filter((_, i) => !flagged[i]);
+    // Keep only images where both captions came back.
+    const written: Pair[] = planned.flatMap((item) => {
+      const forSlot = texts.get(item.slot);
+      const a = forSlot?.get(item.styles[0].slug);
+      const b = forSlot?.get(item.styles[1].slug);
+      return a && b
+        ? [{ imageId: item.imageId, imageUrl: item.imageUrl, captions: [{ style: item.styles[0], text: a }, { style: item.styles[1], text: b }] as Pair["captions"] }]
+        : [];
+    });
+    const flagged = await moderateTexts(config.apiKey, written.flatMap((pair) => pair.captions.map((caption) => caption.text)));
+    pairs = written.filter((_, i) => !flagged[i * 2] && !flagged[i * 2 + 1]);
   } catch (error) {
     console.error("[startAiStudy] OpenAI request failed", error);
     return { success: false, error: "The caption writer is unavailable right now. Please try again in a minute." };
   }
-  if (items.length === 0) return { success: false, error: "We couldn't write captions right now. Please try again." };
+  if (pairs.length === 0) return { success: false, error: "We couldn't write captions right now. Please try again." };
 
   const { data: session, error: sessionError } = await supabase
     .from("ai_study_sessions")
@@ -140,20 +161,22 @@ export async function startAiStudy(): Promise<Result<{ sessionId: string }>> {
   }
   const batchId = crypto.randomUUID();
   const { error: insertError } = await supabase.from("ai_generated_captions").insert(
-    items.map((item, i) => ({
-      profile_id: user.id,
-      batch_id: batchId,
-      image_source: "study",
-      image_url: item.imageUrl,
-      image_id: item.imageId,
-      session_id: session.id,
-      position: i + 1,
-      style_id: item.style.id,
-      caption: item.caption,
-      personalized,
-      model: config.model,
-      prompt_version: AI_STUDY_PROMPT_VERSION,
-    }))
+    pairs.flatMap((pair, i) =>
+      pair.captions.map((caption, side) => ({
+        profile_id: user.id,
+        batch_id: batchId,
+        image_source: "study",
+        image_url: pair.imageUrl,
+        image_id: pair.imageId,
+        session_id: session.id,
+        position: pairPositions(i + 1)[side],
+        style_id: caption.style.id,
+        caption: caption.text,
+        personalized,
+        model: config.model,
+        prompt_version: AI_STUDY_PROMPT_VERSION,
+      }))
+    )
   );
   if (insertError) {
     console.error("[startAiStudy] insert captions failed", insertError);
@@ -166,14 +189,17 @@ export async function startAiStudy(): Promise<Result<{ sessionId: string }>> {
   return { success: true, sessionId: session.id };
 }
 
-export async function markAiStudyViewed(captionId: number): Promise<Result<object>> {
-  if (!Number.isSafeInteger(captionId) || captionId <= 0) return { success: false, error: "Invalid caption." };
+/** Marks both captions of a pair as seen (first view only). */
+export async function markAiStudyViewed(captionIds: number[]): Promise<Result<object>> {
+  if (!Array.isArray(captionIds) || captionIds.length === 0 || captionIds.length > 2 || !captionIds.every((id) => Number.isSafeInteger(id) && id > 0)) {
+    return { success: false, error: "Invalid caption." };
+  }
   const { supabase, user } = await signedIn();
   if (!user) return { success: false, error: "Please sign in to continue." };
   const { error } = await supabase
     .from("ai_generated_captions")
     .update({ viewed_datetime_utc: new Date().toISOString() })
-    .eq("id", captionId)
+    .in("id", captionIds)
     .eq("profile_id", user.id)
     .is("viewed_datetime_utc", null);
   if (error) {
@@ -183,20 +209,40 @@ export async function markAiStudyViewed(captionId: number): Promise<Result<objec
   return { success: true };
 }
 
-export async function rateAiStudyCaption(input: { id: number; funny: boolean }): Promise<Result<object>> {
-  const { id, funny } = input ?? {};
-  if (!Number.isSafeInteger(id) || id <= 0 || typeof funny !== "boolean") return { success: false, error: "Invalid rating." };
+/**
+ * Saves an A/B choice for one image: the picked caption gets rating 1 and the
+ * other -1; "neither" sets both to -1; null clears the choice.
+ */
+export async function chooseAiStudyCaption(input: { sessionId: string; item: number; choice: AbChoice | null }): Promise<Result<object>> {
+  const { sessionId, item, choice } = input ?? {};
+  if (
+    typeof sessionId !== "string" ||
+    !/^[0-9a-f-]{36}$/i.test(sessionId) ||
+    !Number.isSafeInteger(item) ||
+    item < 1 ||
+    item > 25 ||
+    !(choice === null || (AB_CHOICES as readonly string[]).includes(choice))
+  ) {
+    return { success: false, error: "Invalid choice." };
+  }
   const { supabase, user } = await signedIn();
   if (!user) return { success: false, error: "Please sign in to continue." };
-  const { data, error } = await supabase
-    .from("ai_generated_captions")
-    .update({ rating: funny ? 1 : null })
-    .eq("id", id)
-    .eq("profile_id", user.id)
-    .eq("image_source", "study")
-    .select("id");
-  if (error || !data?.length) {
-    if (error) console.error("[rateAiStudyCaption] update failed", error);
+  const positions = pairPositions(item);
+  const ratings = choiceRatings(choice);
+  const results = await Promise.all(
+    positions.map((position, side) =>
+      supabase
+        .from("ai_generated_captions")
+        .update({ rating: ratings[side] })
+        .eq("session_id", sessionId)
+        .eq("position", position)
+        .eq("profile_id", user.id)
+        .select("id")
+    )
+  );
+  const failed = results.find((result) => result.error || !result.data?.length);
+  if (failed) {
+    if (failed.error) console.error("[chooseAiStudyCaption] update failed", failed.error);
     return { success: false, error: "We couldn't save that. Please try again." };
   }
   return { success: true };
@@ -271,7 +317,7 @@ export async function endAiStudy(sessionId: string): Promise<Result<{ summary: s
     .from("ai_study_sessions")
     .update({
       ended_datetime_utc: new Date().toISOString(),
-      item_count: own.length,
+      item_count: Math.ceil(own.length / 2),
       liked_count: likedCaptions.length,
       ai_summary: finalSummary,
     })

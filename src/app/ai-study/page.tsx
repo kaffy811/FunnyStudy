@@ -4,8 +4,8 @@ import { redirect } from "next/navigation";
 
 import { signOut } from "@/app/profile-actions";
 import { AccountMenu } from "@/components/AccountMenu";
-import { AiStudyFlow, type AiStudyItem } from "@/components/AiStudyFlow";
-import { isCurrentStudy } from "@/lib/ai-study";
+import { AiStudyFlow, type AiStudyPair } from "@/components/AiStudyFlow";
+import { choiceFromRatings, isCurrentStudy } from "@/lib/ai-study";
 import { openAiConfig } from "@/lib/openai";
 import { createClient } from "@/lib/supabase/server";
 
@@ -35,7 +35,7 @@ export default async function AiStudyPage() {
     [profile?.first_name, profile?.last_name].filter(Boolean).join(" ").trim() || user.email || "your account";
 
   const sessionId = latest && isCurrentStudy(latest, user.last_sign_in_at) ? (latest.id as string) : null;
-  let items: AiStudyItem[] = [];
+  const items: AiStudyPair[] = [];
   if (sessionId) {
     const { data, error } = await supabase
       .from("ai_generated_captions")
@@ -43,14 +43,19 @@ export default async function AiStudyPage() {
       .eq("session_id", sessionId)
       .order("position");
     if (error) console.error("[AiStudyPage] load captions failed", error);
-    items = ((data ?? []) as CaptionRow[]).map((row) => ({
-      id: row.id,
-      position: row.position,
-      caption: row.caption,
-      imageUrl: row.image_url,
-      funny: row.rating === 1,
-      viewed: row.viewed_datetime_utc !== null,
-    }));
+    const byPosition = new Map(((data ?? []) as CaptionRow[]).map((row) => [row.position, row]));
+    for (let item = 1; byPosition.has(item * 2 - 1) && byPosition.has(item * 2); item += 1) {
+      const a = byPosition.get(item * 2 - 1)!;
+      const b = byPosition.get(item * 2)!;
+      items.push({
+        item,
+        imageUrl: a.image_url,
+        a: { id: a.id, caption: a.caption },
+        b: { id: b.id, caption: b.caption },
+        choice: choiceFromRatings(a.rating, b.rating),
+        viewed: a.viewed_datetime_utc !== null,
+      });
+    }
   }
 
   return (

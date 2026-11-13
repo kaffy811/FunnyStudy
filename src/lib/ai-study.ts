@@ -1,7 +1,7 @@
 // AI studies: pure helpers (no runtime imports so tests can load this file directly).
 
 /** Bump when a prompt changes so results can be compared per prompt version. */
-export const AI_STUDY_PROMPT_VERSION = "study-v1";
+export const AI_STUDY_PROMPT_VERSION = "study-v2-ab";
 export const AI_STUDY_SIZE = 10;
 export const AI_STUDY_BATCH_SIZE = 5;
 /** Images requested from the pool; extra ones replace images that fail moderation. */
@@ -13,18 +13,43 @@ const MAX_CAPTION_CHARS = 300;
 export type StudyStyle = { id: number; slug: string; name: string; description: string };
 export type StyleStat = { styleId: number; name: string; shown: number; liked: number };
 export type CaptionSignal = { styleId: number; viewed: boolean; rating: -1 | 1 | null };
+export const AB_CHOICES = ["a", "b", "neither"] as const;
+export type AbChoice = (typeof AB_CHOICES)[number];
 
 /**
- * Assigns styles to `count` slots as evenly as possible (each style count/n
- * times, remainder spread at random), then shuffles. This is the A/B design:
- * styles are assigned by the system, never by personalization.
+ * A/B design: `count` images, each with two different styles. Every unordered
+ * style pairing is used once before any repeats (5 styles -> 10 pairings, so a
+ * 10-image study shows each style 4 times), in random order and random sides.
  */
-export function assignStyles<T>(styles: readonly T[], count: number, random: () => number = Math.random): T[] {
-  if (styles.length === 0 || count <= 0) return [];
-  const slots: T[] = [];
-  for (let i = 0; i < Math.floor(count / styles.length); i += 1) slots.push(...styles);
-  const extra = shuffle([...styles], random).slice(0, count % styles.length);
-  return shuffle([...slots, ...extra], random);
+export function assignStylePairs<T>(styles: readonly T[], count: number, random: () => number = Math.random): [T, T][] {
+  if (styles.length < 2 || count <= 0) return [];
+  const pairings: [T, T][] = [];
+  for (let i = 0; i < styles.length; i += 1) {
+    for (let j = i + 1; j < styles.length; j += 1) pairings.push([styles[i], styles[j]]);
+  }
+  const out: [T, T][] = [];
+  while (out.length < count) out.push(...shuffle([...pairings], random));
+  return out.slice(0, count).map(([a, b]) => (random() < 0.5 ? [a, b] : [b, a]));
+}
+
+/** Database positions for image k (1-based): caption A at 2k-1, caption B at 2k. */
+export function pairPositions(item: number): [number, number] {
+  return [item * 2 - 1, item * 2];
+}
+
+/** Ratings to save for an A/B choice (null clears it): picked = 1, not picked = -1. */
+export function choiceRatings(choice: AbChoice | null): [-1 | 1 | null, -1 | 1 | null] {
+  if (choice === "a") return [1, -1];
+  if (choice === "b") return [-1, 1];
+  if (choice === "neither") return [-1, -1];
+  return [null, null];
+}
+
+export function choiceFromRatings(a: number | null, b: number | null): AbChoice | null {
+  if (a === 1) return "a";
+  if (b === 1) return "b";
+  if (a === -1 && b === -1) return "neither";
+  return null;
 }
 
 export function shuffle<T>(items: T[], random: () => number = Math.random): T[] {
@@ -41,9 +66,9 @@ export function chunk<T>(items: readonly T[], size: number): T[][] {
   return out;
 }
 
-/** One request covering several images, each with the style it must be written in. */
+/** One request covering several images, each with the two styles it must be captioned in. */
 export function buildStudyCaptionMessages(input: {
-  items: { slot: number; imageUrl: string; style: StudyStyle }[];
+  items: { slot: number; imageUrl: string; styles: [StudyStyle, StudyStyle] }[];
   profileSummary: string | null;
 }) {
   const { items, profileSummary } = input;
@@ -53,18 +78,22 @@ export function buildStudyCaptionMessages(input: {
     "Keep it kind: no slurs, sexual content, violence, or jokes about anyone's body, race, religion, gender, disability or other protected trait.",
     "Never identify or guess the identity of real people in an image; describe them only by what they are doing.",
     "Captions should feel relatable to college students.",
-    "Write each caption in exactly the humor style assigned to its image, even if another style seems funnier.",
+    "Write each caption in exactly the humor style requested, even if another style seems funnier, and make both captions for an image equally good.",
   ].join(" ");
   const intro = [
-    `Write one caption for each of the ${items.length} images below, in the humor style given for that image.`,
+    `For each of the ${items.length} images below, write two captions: one in each of the two humor styles given for that image.`,
     profileSummary
-      ? `The reader described their sense of humor like this (use it only to tune wording, never change the assigned style, never quote it): """${profileSummary}"""`
+      ? `The reader described their sense of humor like this (use it only to tune wording, never change the requested styles, never quote it): """${profileSummary}"""`
       : "Write for a general audience.",
-    "Return JSON only, with the image number for each caption.",
+    "Return JSON only, with the image number and style for each caption.",
   ].join("\n\n");
   const content: unknown[] = [{ type: "text", text: intro }];
   for (const item of items) {
-    content.push({ type: "text", text: `Image ${item.slot}: style "${item.style.slug}" (${item.style.description}).` });
+    const [a, b] = item.styles;
+    content.push({
+      type: "text",
+      text: `Image ${item.slot}: one caption in style "${a.slug}" (${a.description}) and one in style "${b.slug}" (${b.description}).`,
+    });
     content.push({ type: "image_url", image_url: { url: item.imageUrl, detail: "low" } });
   }
   return [
@@ -73,7 +102,7 @@ export function buildStudyCaptionMessages(input: {
   ];
 }
 
-export function studyCaptionResponseFormat(slots: number[]) {
+export function studyCaptionResponseFormat(slots: number[], slugs: string[]) {
   return {
     type: "json_schema",
     json_schema: {
@@ -89,8 +118,12 @@ export function studyCaptionResponseFormat(slots: number[]) {
             items: {
               type: "object",
               additionalProperties: false,
-              required: ["image", "text"],
-              properties: { image: { type: "integer", enum: slots }, text: { type: "string" } },
+              required: ["image", "style", "text"],
+              properties: {
+                image: { type: "integer", enum: slots },
+                style: { type: "string", enum: slugs },
+                text: { type: "string" },
+              },
             },
           },
         },
@@ -112,24 +145,33 @@ export function cleanCaption(text: string) {
   return text.replace(/\s+/g, " ").trim().replace(/^["“]|["”]$/g, "");
 }
 
-/** Caption text per image slot; unknown slots, duplicates and bad lengths are dropped. */
-export function parseStudyCaptions(raw: unknown, slots: readonly number[]): Map<number, string> {
+/**
+ * Caption text per image slot and style. Only the styles requested for that
+ * slot are kept, once each; text is cleaned and length-checked.
+ */
+export function parseStudyCaptions(raw: unknown, requested: ReadonlyMap<number, readonly string[]>): Map<number, Map<string, string>> {
   const list = (parseJson(raw) as { captions?: unknown })?.captions;
-  const result = new Map<number, string>();
+  const result = new Map<number, Map<string, string>>();
   if (!Array.isArray(list)) return result;
   for (const item of list) {
     const slot = (item as { image?: unknown })?.image;
+    const style = (item as { style?: unknown })?.style;
     const text = (item as { text?: unknown })?.text;
-    if (typeof slot !== "number" || typeof text !== "string" || !slots.includes(slot) || result.has(slot)) continue;
+    if (typeof slot !== "number" || typeof style !== "string" || typeof text !== "string") continue;
+    if (!requested.get(slot)?.includes(style)) continue;
+    const forSlot = result.get(slot) ?? new Map<string, string>();
     const clean = cleanCaption(text);
-    if (clean.length > 0 && clean.length <= MAX_CAPTION_CHARS) result.set(slot, clean);
+    if (forSlot.has(style) || clean.length === 0 || clean.length > MAX_CAPTION_CHARS) continue;
+    forSlot.set(style, clean);
+    result.set(slot, forSlot);
   }
   return result;
 }
 
 /**
  * Per-style A/B tally. A caption counts as shown once it was viewed or rated;
- * liked means a Funny tap (rating 1). Sorted by like rate, then volume.
+ * liked means it was picked (study) or rated Funny (caption lab). Sorted by
+ * pick rate, then volume.
  */
 export function styleStats(styles: readonly StudyStyle[], signals: readonly CaptionSignal[]): StyleStat[] {
   const stats = new Map(styles.map((style) => [style.id, { styleId: style.id, name: style.name, shown: 0, liked: 0 }]));
@@ -152,7 +194,7 @@ export function buildSummaryMessages(input: {
   studyCount: number;
 }) {
   const { stats, likedCaptions, previousSummary, previousByParticipant, studyCount } = input;
-  const statLines = stats.map((s) => `- ${s.name}: liked ${s.liked} of ${s.shown} shown`).join("\n") || "- no data yet";
+  const statLines = stats.map((s) => `- ${s.name}: picked ${s.liked} of ${s.shown} times shown`).join("\n") || "- no data yet";
   const system = [
     "You describe a person's sense of humor for a university humor study, in 2 to 4 short sentences of plain English, addressed to them as \"you\".",
     "Base it only on the data given. Mention which humor styles land best and which don't, with no percentages unless they help.",
@@ -160,11 +202,11 @@ export function buildSummaryMessages(input: {
     `Stay under ${AI_SUMMARY_MAX - 200} characters.`,
   ].join(" ");
   const user = [
-    `Across ${studyCount} AI ${studyCount === 1 ? "study" : "studies"} and the caption lab, this is how often each humor style got a Funny tap:`,
+    `In each study the person sees two captions per image, in two different humor styles, and picks the funnier one (or neither). Across ${studyCount} ${studyCount === 1 ? "study" : "studies"} and the caption lab, this is how often each style was picked:`,
     statLines,
     likedCaptions.length > 0
-      ? `Captions they found funny in the study that just ended:\n${likedCaptions.map((c) => `- ${c}`).join("\n")}`
-      : "They didn't tap Funny on any caption in the study that just ended.",
+      ? `Captions they picked in the study that just ended:\n${likedCaptions.map((c) => `- ${c}`).join("\n")}`
+      : "They picked neither caption for every image in the study that just ended.",
     previousSummary
       ? previousByParticipant
         ? `They wrote this description themselves. Keep what they said unless the data clearly contradicts it, and update it:\n"""${previousSummary}"""`
@@ -212,7 +254,7 @@ export function fallbackSummary(stats: StyleStat[]): string {
   const eligible = stats.filter((s) => s.shown >= 2);
   const favorites = eligible.filter((s) => s.liked / s.shown >= 0.5).map((s) => s.name.toLowerCase());
   const passes = eligible.filter((s) => s.liked === 0).map((s) => s.name.toLowerCase());
-  const sentences = [`You found ${liked} of ${total} AI captions funny so far.`];
+  const sentences = [`You picked ${liked} of ${total} AI captions you were shown so far.`];
   sentences.push(favorites.length > 0 ? `${listNames(favorites)} humor lands best with you.` : "No humor style stands out yet.");
   if (passes.length > 0) sentences.push(`${listNames(passes)} jokes haven't landed so far.`);
   return sentences.map((sentence) => sentence.charAt(0).toUpperCase() + sentence.slice(1)).join(" ");

@@ -99,17 +99,20 @@ requests should use the logged-in user's JWT.
 
 `/ai-study` (the top card on the home page) gives every sign-in a fresh study:
 about 10 random images that appear in research studies (and are public or
-common-use), each with one AI-written caption. Humor styles (playful,
-sarcastic, absurd, deadpan, wholesome) are assigned evenly at random, so a
-`Funny` tap is an A/B signal per style. Ending a study asks OpenAI for a 2-4
+common-use), each with two AI-written captions in two different humor styles
+(playful, sarcastic, absurd, deadpan, wholesome). Every style pairing appears
+once per study in random order, and the participant picks the funnier caption
+(or Neither), which is the A/B signal. Swipe, wheel, arrow keys or the ↑/↓
+buttons move between images; the middle button lists earlier picks. Ending a study asks OpenAI for a 2-4
 sentence humor description that is saved to the participant's profile and on
 the study; a rule-based summary is used if the AI is unavailable. Apply
 `supabase/migrations/20261113030000_add_ai_study_sessions.sql`. Pure helpers are
 covered by `npm run test:ai-study`.
 
-`/history` shows the editable humor profile, per-style Funny rates, the
-personalization switch, past AI studies (expandable, with every caption),
-caption-lab captions and research-study participations. The old humor style
+`/history` shows the editable humor profile, per-style pick rates, the
+personalization switch and past AI studies (expandable, with both captions per
+image). Research studies are no longer listed on the home page but stay
+reachable at `/study/{id}`. The old humor style
 check (`/style-preferences`) now redirects to `/ai-study`; its tables and data
 are kept. Earlier migrations
 `20261112220000_add_humor_style_preferences.sql`,

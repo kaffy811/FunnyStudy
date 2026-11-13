@@ -8,12 +8,10 @@ import { HumorSummaryEditor } from "@/components/HumorSummaryEditor";
 import { LocalDateTime } from "@/components/LocalDateTime";
 import { PersonalizationToggle } from "@/components/PersonalizationToggle";
 import { fallbackSummary, styleStats, type StudyStyle } from "@/lib/ai-study";
-import { parseStudyStats } from "@/lib/study-stats";
 import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
-type Participation = { study_id: number; started_at: string; ended_at: string | null; completion_stats: unknown };
 type CaptionRow = {
   id: number;
   session_id: string | null;
@@ -43,7 +41,7 @@ export default async function HistoryPage() {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
-  const [{ data: profile }, styles, sessions, captions, participations, savedSummary, consent] = await Promise.all([
+  const [{ data: profile }, styles, sessions, captions, savedSummary, consent] = await Promise.all([
     supabase.from("profiles").select("first_name, last_name").eq("id", user.id).single(),
     supabase.from("humor_styles").select("id, slug, name, description").order("id"),
     supabase
@@ -59,11 +57,6 @@ export default async function HistoryPage() {
       .order("created_datetime_utc", { ascending: false })
       .order("id", { ascending: false })
       .limit(1000),
-    supabase
-      .from("study_participations")
-      .select("study_id, started_at, ended_at, completion_stats")
-      .eq("profile_id", user.id)
-      .order("started_at", { ascending: false }),
     supabase.from("profile_humor_summaries").select("summary, source").eq("profile_id", user.id).maybeSingle(),
     supabase.from("style_preference_feedback").select("personalization_consent").eq("profile_id", user.id).maybeSingle(),
   ]);
@@ -71,7 +64,6 @@ export default async function HistoryPage() {
     ["styles", styles.error],
     ["sessions", sessions.error],
     ["captions", captions.error],
-    ["participations", participations.error],
     ["summary", savedSummary.error],
   ] as const) {
     if (error) console.error(`[HistoryPage] load ${label} failed`, error);
@@ -93,8 +85,6 @@ export default async function HistoryPage() {
     bySession.set(row.session_id, [...(bySession.get(row.session_id) ?? []), row]);
   }
   const studySessions = (sessions.data ?? []) as SessionRow[];
-  const lab = rows.filter((row) => row.image_source !== "study");
-  const studies = (participations.data ?? []) as Participation[];
   const summarySource = savedSummary.data?.source === "ai" ? "ai" : "user";
 
   return (
@@ -128,12 +118,12 @@ export default async function HistoryPage() {
             />
           </div>
           {stats.length > 0 ? (
-            <ul className="mt-5 grid gap-2 sm:grid-cols-2" aria-label="Funny taps by humor style">
+            <ul className="mt-5 grid gap-2 sm:grid-cols-2" aria-label="Picks by humor style">
               {stats.map(({ styleId, name, shown, liked }) => (
                 <li key={styleId} className="rounded-xl border border-[var(--panel-border)] p-3">
                   <div className="flex items-baseline justify-between gap-2 text-sm">
                     <span className="font-semibold">{name}</span>
-                    <span className="text-[var(--muted)]">funny {liked} of {shown}</span>
+                    <span className="text-[var(--muted)]">picked {liked} of {shown}</span>
                   </div>
                   <div className="mt-2 h-1.5 rounded-full bg-[var(--panel-border)]" aria-hidden>
                     <div className="h-1.5 rounded-full bg-[var(--accent)]" style={{ width: `${(liked / shown) * 100}%` }} />
@@ -159,9 +149,16 @@ export default async function HistoryPage() {
           ) : (
             <ul className="mt-4 space-y-3">
               {studySessions.map((session) => {
-                const items = (bySession.get(session.id) ?? []).sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
-                const liked = session.liked_count ?? items.filter((item) => item.rating === 1).length;
-                const total = session.item_count ?? items.length;
+                const rowsInOrder = (bySession.get(session.id) ?? []).sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
+                // A/B studies store two captions per image at consecutive positions.
+                const images: { key: number; imageUrl: string | null; captions: CaptionRow[] }[] = [];
+                for (const row of rowsInOrder) {
+                  const last = images.at(-1);
+                  if (last && last.imageUrl === row.image_url && last.captions.length < 2) last.captions.push(row);
+                  else images.push({ key: row.id, imageUrl: row.image_url, captions: [row] });
+                }
+                const liked = session.liked_count ?? rowsInOrder.filter((row) => row.rating === 1).length;
+                const total = session.item_count ?? images.length;
                 return (
                   <li key={session.id}>
                     <details className="group rounded-2xl border border-[var(--panel-border)] p-4">
@@ -175,23 +172,29 @@ export default async function HistoryPage() {
                               <span className="text-xs font-semibold text-[var(--muted)]">Not finished</span>
                             )}
                           </div>
-                          <p className="text-[var(--muted)]">Found {liked} of {total} captions funny</p>
+                          <p className="text-[var(--muted)]">Picked a favorite for {liked} of {total} images</p>
                           {session.ai_summary ? <p className="leading-6">{session.ai_summary}</p> : null}
                         </div>
                         <ArrowRightIcon aria-hidden className="mt-1 h-5 w-5 shrink-0 text-[var(--accent-strong)] transition group-open:rotate-90" />
                       </summary>
                       <ul className="mt-4 space-y-3 border-t border-[var(--panel-border)] pt-4">
-                        {items.map((item) => (
-                          <li key={item.id} className="flex gap-3">
-                            <div className="min-w-0 flex-1 space-y-1 text-sm">
-                              <p className="font-semibold leading-6">{item.caption}</p>
-                              <p className="text-xs text-[var(--muted)]">
-                                {styleNames.get(item.style_id) ?? "Unknown style"} · {item.rating === 1 ? "You found it funny" : item.viewed_datetime_utc ? "Seen" : "Not seen"}
-                              </p>
-                            </div>
-                            {item.image_url ? (
+                        {images.map((image) => (
+                          <li key={image.key} className="flex gap-3">
+                            <ul className="min-w-0 flex-1 space-y-1 text-sm">
+                              {image.captions.map((item) => (
+                                <li key={item.id} className={item.rating === 1 ? "font-semibold leading-6" : "leading-6 text-[var(--muted)]"}>
+                                  {item.rating === 1 ? "✓ " : ""}
+                                  {item.caption}
+                                  <span className="ml-1 text-xs font-normal text-[var(--muted)]">({styleNames.get(item.style_id) ?? "Unknown style"})</span>
+                                </li>
+                              ))}
+                              {image.captions.length === 2 && image.captions.every((item) => item.rating === -1) ? (
+                                <li className="text-xs text-[var(--muted)]">You picked neither</li>
+                              ) : null}
+                            </ul>
+                            {image.imageUrl ? (
                               // eslint-disable-next-line @next/next/no-img-element -- whole external study images
-                              <img src={item.image_url} alt="" loading="lazy" className="h-16 w-16 shrink-0 rounded-lg bg-[var(--surface-muted)] object-contain" />
+                              <img src={image.imageUrl} alt="" loading="lazy" className="h-16 w-16 shrink-0 rounded-lg bg-[var(--surface-muted)] object-contain" />
                             ) : null}
                           </li>
                         ))}
@@ -204,83 +207,6 @@ export default async function HistoryPage() {
           )}
         </section>
 
-        <section aria-labelledby="lab-heading" className={sectionClass}>
-          <div className="flex flex-wrap items-baseline justify-between gap-2">
-            <h2 id="lab-heading" className="text-xl font-bold">Caption lab</h2>
-            <Link href="/caption-lab" className="text-sm font-semibold underline">Upload a photo</Link>
-          </div>
-          {captions.error ? (
-            <p className="mt-3 text-sm text-[var(--error-text)]">We couldn&apos;t load your AI captions.</p>
-          ) : lab.length === 0 ? (
-            <p className="mt-3 text-sm text-[var(--muted)]">You haven&apos;t captioned any photos yet.</p>
-          ) : (
-            <ul className="mt-4 space-y-3">
-              {lab.slice(0, 20).map((row) => (
-                <li key={row.id} className="flex gap-3 rounded-2xl border border-[var(--panel-border)] p-3">
-                  <div className="min-w-0 flex-1 space-y-1 text-sm">
-                    <p className="font-semibold leading-6">{row.caption}</p>
-                    <p className="text-xs text-[var(--muted)]">
-                      {styleNames.get(row.style_id) ?? "Unknown style"}
-                      {row.personalized ? " · personalized" : ""}
-                      {" · "}
-                      {row.rating === 1 ? "You found it funny" : row.rating === -1 ? "Not for you" : "Not rated"}
-                      {" · "}
-                      <LocalDateTime value={row.created_datetime_utc} />
-                    </p>
-                  </div>
-                  {row.image_url ? (
-                    // eslint-disable-next-line @next/next/no-img-element -- whole external sample images
-                    <img src={row.image_url} alt="" loading="lazy" className="h-16 w-16 shrink-0 rounded-lg bg-[var(--surface-muted)] object-contain" />
-                  ) : (
-                    <span className="flex h-16 w-16 shrink-0 items-center justify-center rounded-lg bg-[var(--surface-muted)] text-center text-[10px] text-[var(--muted)]">
-                      Your photo (not stored)
-                    </span>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-
-        <section aria-labelledby="studies-heading" className={sectionClass}>
-          <h2 id="studies-heading" className="text-xl font-bold">Research studies</h2>
-          {participations.error ? (
-            <p className="mt-3 text-sm text-[var(--error-text)]">We couldn&apos;t load your research studies.</p>
-          ) : studies.length === 0 ? (
-            <p className="mt-3 text-sm text-[var(--muted)]">You haven&apos;t joined a research study yet.</p>
-          ) : (
-            <ul className="mt-4 space-y-3">
-              {studies.map((study) => {
-                const studyStats = parseStudyStats(study.completion_stats);
-                return (
-                  <li key={study.study_id}>
-                    <Link
-                      href={`/study/${study.study_id}`}
-                      prefetch={false}
-                      className="flex items-center gap-4 rounded-2xl border border-[var(--panel-border)] p-4 transition hover:border-[var(--accent)] hover:bg-[var(--surface-muted)]"
-                    >
-                      <div className="min-w-0 flex-1 space-y-1 text-sm">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="text-base font-semibold">Study {study.study_id}</span>
-                          {study.ended_at ? (
-                            <span className="rounded-full bg-[var(--accent)] px-2.5 py-0.5 text-xs font-semibold text-[var(--accent-contrast)]">Completed</span>
-                          ) : (
-                            <span className="text-xs font-semibold text-[var(--muted)]">In progress</span>
-                          )}
-                        </div>
-                        <p className="text-[var(--muted)]">Started <LocalDateTime value={study.started_at} /></p>
-                        {studyStats ? (
-                          <p className="text-[var(--muted)]">Liked {studyStats.likedCount} of {studyStats.viewedCount} captions viewed</p>
-                        ) : null}
-                      </div>
-                      <ArrowRightIcon aria-hidden className="h-5 w-5 shrink-0 text-[var(--accent-strong)]" />
-                    </Link>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </section>
       </main>
       <AccountMenu displayName={displayName} email={user.email} signOutAction={signOut} />
     </div>

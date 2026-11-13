@@ -32,6 +32,7 @@ export async function createChatCompletion(input: {
   model: string;
   messages: unknown[];
   responseFormat: unknown;
+  maxTokens?: number;
 }): Promise<string> {
   const data = await post("/chat/completions", input.apiKey, {
     model: input.model,
@@ -39,7 +40,7 @@ export async function createChatCompletion(input: {
     response_format: input.responseFormat,
     // Reasoning models (o-series, gpt-5) reject a custom temperature.
     ...(/^(o\d|gpt-5)/.test(input.model) ? {} : { temperature: 0.9 }),
-    max_completion_tokens: /^(o\d|gpt-5)/.test(input.model) ? 4000 : 600,
+    max_completion_tokens: /^(o\d|gpt-5)/.test(input.model) ? 4000 : input.maxTokens ?? 600,
   });
   const content = data?.choices?.[0]?.message?.content;
   if (typeof content !== "string") throw new Error("OpenAI returned no caption content");

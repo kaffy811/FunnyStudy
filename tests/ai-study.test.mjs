@@ -20,56 +20,67 @@ const styles = ["playful", "sarcastic", "absurd", "deadpan", "wholesome"].map((s
 let seed = 7;
 const seeded = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
 
-test("assignStyles gives each of 5 styles exactly 2 of 10 slots", () => {
+test("assignStylePairs uses every style pairing once in 10 images, two different styles each", () => {
   for (let run = 0; run < 20; run += 1) {
+    const pairs = study.assignStylePairs(styles, 10, seeded);
+    assert.equal(pairs.length, 10);
+    assert.ok(pairs.every(([a, b]) => a.id !== b.id));
+    const keys = new Set(pairs.map(([a, b]) => [a.id, b.id].sort().join("-")));
+    assert.equal(keys.size, 10);
     const counts = new Map();
-    for (const style of study.assignStyles(styles, 10, seeded)) counts.set(style.id, (counts.get(style.id) ?? 0) + 1);
-    assert.deepEqual([...counts.values()].sort(), [2, 2, 2, 2, 2]);
+    for (const style of pairs.flat()) counts.set(style.id, (counts.get(style.id) ?? 0) + 1);
+    assert.deepEqual([...counts.values()], [4, 4, 4, 4, 4]);
   }
+  assert.equal(study.assignStylePairs(styles, 12, seeded).length, 12);
+  assert.deepEqual(study.assignStylePairs(styles.slice(0, 1), 3), []);
 });
 
-test("assignStyles spreads a remainder over distinct styles", () => {
-  const picked = study.assignStyles(styles, 7, seeded);
-  assert.equal(picked.length, 7);
-  const counts = new Map();
-  for (const style of picked) counts.set(style.id, (counts.get(style.id) ?? 0) + 1);
-  assert.equal(counts.size, 5);
-  assert.ok([...counts.values()].every((n) => n === 1 || n === 2));
-  assert.deepEqual(study.assignStyles([], 5), []);
+test("A/B choices map to ratings on both captions and back", () => {
+  assert.deepEqual(study.pairPositions(3), [5, 6]);
+  assert.deepEqual(study.choiceRatings("a"), [1, -1]);
+  assert.deepEqual(study.choiceRatings("b"), [-1, 1]);
+  assert.deepEqual(study.choiceRatings("neither"), [-1, -1]);
+  assert.deepEqual(study.choiceRatings(null), [null, null]);
+  for (const choice of ["a", "b", "neither", null]) {
+    assert.equal(study.choiceFromRatings(...study.choiceRatings(choice)), choice);
+  }
 });
 
 test("chunk splits into batches", () => {
   assert.deepEqual(study.chunk([1, 2, 3, 4, 5, 6, 7], 5), [[1, 2, 3, 4, 5], [6, 7]]);
 });
 
-test("parseStudyCaptions keeps known slots once, cleans and length-checks text", () => {
+test("parseStudyCaptions keeps only the requested styles per image, once each, cleaned and length-checked", () => {
   const raw = JSON.stringify({
     captions: [
-      { image: 1, text: '  "Hello   there"  ' },
-      { image: 1, text: "duplicate" },
-      { image: 9, text: "unknown slot" },
-      { image: 2, text: "x".repeat(301) },
-      { image: 3, text: "Fine" },
+      { image: 1, style: "playful", text: '  "Hello   there"  ' },
+      { image: 1, style: "playful", text: "duplicate" },
+      { image: 1, style: "deadpan", text: "Second" },
+      { image: 1, style: "absurd", text: "not requested for image 1" },
+      { image: 9, style: "playful", text: "unknown image" },
+      { image: 2, style: "sarcastic", text: "x".repeat(301) },
     ],
   });
-  const parsed = study.parseStudyCaptions(raw, [1, 2, 3]);
-  assert.deepEqual([...parsed.entries()], [[1, "Hello there"], [3, "Fine"]]);
-  assert.equal(study.parseStudyCaptions("not json", [1]).size, 0);
+  const parsed = study.parseStudyCaptions(raw, new Map([[1, ["playful", "deadpan"]], [2, ["sarcastic", "absurd"]]]));
+  assert.deepEqual([...parsed.get(1).entries()], [["playful", "Hello there"], ["deadpan", "Second"]]);
+  assert.equal(parsed.has(2), false);
+  assert.equal(study.parseStudyCaptions("not json", new Map([[1, ["playful"]]])).size, 0);
 });
 
-test("buildStudyCaptionMessages sends each image with its assigned style and only the summary when given", () => {
+test("buildStudyCaptionMessages asks for both styles per image and only uses the summary when given", () => {
   const items = [
-    { slot: 1, imageUrl: "https://x/1.jpg", style: styles[0] },
-    { slot: 2, imageUrl: "https://x/2.jpg", style: styles[3] },
+    { slot: 1, imageUrl: "https://x/1.jpg", styles: [styles[0], styles[3]] },
+    { slot: 2, imageUrl: "https://x/2.jpg", styles: [styles[1], styles[2]] },
   ];
   const plain = study.buildStudyCaptionMessages({ items, profileSummary: null });
   const content = plain[1].content;
   assert.equal(content.filter((part) => part.type === "image_url").length, 2);
-  assert.match(content[1].text, /Image 1: style "playful"/);
-  assert.match(content[3].text, /Image 2: style "deadpan"/);
+  assert.match(content[1].text, /Image 1: .*"playful".*"deadpan"/);
+  assert.match(content[3].text, /Image 2: .*"sarcastic".*"absurd"/);
   assert.doesNotMatch(JSON.stringify(plain), /described their sense of humor/);
-  const tuned = study.buildStudyCaptionMessages({ items, profileSummary: "Loves puns" });
-  assert.match(JSON.stringify(tuned), /Loves puns/);
+  assert.match(JSON.stringify(study.buildStudyCaptionMessages({ items, profileSummary: "Loves puns" })), /Loves puns/);
+  const schema = study.studyCaptionResponseFormat([1, 2], ["playful", "deadpan"]).json_schema.schema;
+  assert.deepEqual(schema.properties.captions.items.required, ["image", "style", "text"]);
 });
 
 test("styleStats counts viewed or rated captions and Funny taps per style", () => {
@@ -102,7 +113,7 @@ test("buildSummaryMessages keeps a participant-written description", () => {
   });
   const text = messages[1].content;
   assert.match(text, /wrote this description themselves/);
-  assert.match(text, /Playful: liked 2 of 2/);
+  assert.match(text, /Playful: picked 2 of 2 times shown/);
   assert.match(text, /A caption/);
 });
 
@@ -111,7 +122,7 @@ test("fallbackSummary names the styles that land and the ones that don't", () =>
     { styleId: 1, name: "Playful", liked: 2, shown: 2 },
     { styleId: 4, name: "Deadpan", liked: 0, shown: 2 },
   ]);
-  assert.equal(text, "You found 2 of 4 AI captions funny so far. Playful humor lands best with you. Deadpan jokes haven't landed so far.");
+  assert.equal(text, "You picked 2 of 4 AI captions you were shown so far. Playful humor lands best with you. Deadpan jokes haven't landed so far.");
   assert.match(study.fallbackSummary([]), /still forming/);
 });
 

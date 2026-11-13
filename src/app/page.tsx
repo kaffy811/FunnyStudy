@@ -4,16 +4,13 @@ import { redirect } from "next/navigation";
 import { ArrowRightIcon } from "@heroicons/react/24/outline";
 
 import { AccountMenu } from "@/components/AccountMenu";
-import { LocalDateTime } from "@/components/LocalDateTime";
 import { isCurrentStudy } from "@/lib/ai-study";
 import { SubmitButton } from "@/components/SubmitButton";
 import { ThemeMenu } from "@/components/theme/ThemeMenu";
 import { buildDemographicsPath, hasPendingDemographicQuestions } from "@/lib/demographics";
 import { DEMOGRAPHIC_SKIPS_COOKIE, readDemographicSkips } from "@/lib/demographic-skips";
 import { buildNotificationPreferencesPath, fetchNotificationPreferences, NOTIFICATION_SKIPS_COOKIE, readNotificationSkips } from "@/lib/notification-preferences";
-import { fetchPublicActiveStudyIdentities } from "@/lib/studies";
 import { createClient } from "@/lib/supabase/server";
-import { fetchStudyParticipations, isStudyCompleted } from "@/lib/study-participation";
 import type { TablesUpdate } from "@/types/supabase";
 
 type Profile = {
@@ -33,7 +30,6 @@ export default async function Home({
   const message = Array.isArray(messageRaw) ? messageRaw[0] : messageRaw;
 
   const supabase = await createClient();
-  const studyNow = new Date();
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -57,18 +53,11 @@ export default async function Home({
     redirect(buildDemographicsPath({ next: "/", skippedQuestionIds }));
   }
 
-  const [
-    { data: profileData },
-    { studies: activeStudyIdentities, error: activeStudyIdentitiesError },
-  ] =
-    await Promise.all([
-      supabase
-        .from("profiles")
-        .select("first_name, last_name")
-        .eq("id", user.id)
-        .single(),
-      fetchPublicActiveStudyIdentities(supabase, studyNow),
-    ]);
+  const { data: profileData } = await supabase
+    .from("profiles")
+    .select("first_name, last_name")
+    .eq("id", user.id)
+    .single();
 
   const profile = profileData as Profile | null;
 
@@ -89,13 +78,6 @@ export default async function Home({
     );
   }
 
-  if (activeStudyIdentitiesError) {
-    console.error("[Home] load active study identities failed", activeStudyIdentitiesError);
-  }
-
-  const { participations, error: participationError } = await fetchStudyParticipations(
-    supabase, user.id, activeStudyIdentities.map((study) => study.id)
-  );
   const { data: latestAiStudy } = await supabase
     .from("ai_study_sessions")
     .select("id, created_datetime_utc, ended_datetime_utc")
@@ -104,11 +86,6 @@ export default async function Home({
     .limit(1)
     .maybeSingle();
   const aiStudyInProgress = isCurrentStudy(latestAiStudy, user.last_sign_in_at);
-  const participationByStudy = new Map(participations.map((row) => [row.study_id, row]));
-  if (participationError) {
-    console.error("[Home] load study participation failed", participationError);
-  }
-
   return (
     <div
       id="home-root"
@@ -121,7 +98,7 @@ export default async function Home({
         <Link
           href="/ai-study"
           prefetch={false}
-          className="glass-panel mb-8 flex items-center gap-4 rounded-[28px] border-2 border-[var(--accent)] p-6 transition hover:bg-[var(--surface-muted)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent-strong)] sm:p-8"
+          className="glass-panel mb-6 flex items-center gap-4 rounded-[28px] border-2 border-[var(--accent)] p-6 transition hover:bg-[var(--surface-muted)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent-strong)] sm:p-8"
         >
           <div className="min-w-0 flex-1 space-y-2">
             <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[var(--soft)]">
@@ -129,88 +106,16 @@ export default async function Home({
             </p>
             <h1 className="text-2xl font-black sm:text-3xl">{aiStudyInProgress ? "Continue your study" : "Start a new study"}</h1>
             <p className="text-sm leading-6 text-[var(--muted)] sm:text-base">
-              About 10 random images, each with a fresh AI-written caption. Tap Funny on the ones you like; when you finish,
-              the AI updates your humor profile.
+              About 10 random images, each with two fresh AI captions in different humor styles. Pick the funnier one;
+              when you finish, the AI updates your humor profile.
             </p>
           </div>
           <ArrowRightIcon aria-hidden className="h-6 w-6 shrink-0 text-[var(--accent-strong)]" />
         </Link>
-        {activeStudyIdentitiesError ? (
-          <div className="glass-panel rounded-2xl p-6 text-center sm:p-8">
-            <h2 className="text-2xl font-bold text-[var(--error-text)]">
-              We couldn&apos;t load studies
-            </h2>
-            <p className="mt-3 text-sm text-[var(--muted)]">
-              Please refresh and try again.
-            </p>
-          </div>
-        ) : activeStudyIdentities.length === 0 ? (
-          <div className="glass-panel rounded-2xl p-6 text-center sm:p-8">
-            <h2 className="text-2xl font-bold sm:text-3xl">No active studies</h2>
-          </div>
-        ) : (
-          <>
-            <header className="mb-6 space-y-2 sm:mb-8">
-              <h2 className="text-2xl font-bold sm:text-3xl">Active studies</h2>
-              <p className="text-sm text-[var(--muted)] sm:text-base">
-                Research studies from the Humor Project team.
-              </p>
-            </header>
-            {participationError ? (
-              <p role="alert" className="mb-4 text-sm text-[var(--error-text)]">
-                We couldn&apos;t load your study completion status. Please refresh to try again.
-              </p>
-            ) : null}
-            <ul className="space-y-3">
-              {activeStudyIdentities.map((study) => (
-                <li key={study.id}>
-                  <Link
-                    href={`/study/${study.id}`}
-                    prefetch={false}
-                    className="glass-panel flex items-center gap-4 rounded-2xl p-5 transition hover:border-[var(--accent)] hover:bg-[var(--surface-muted)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent-strong)] sm:p-6"
-                  >
-                    <div className="min-w-0 flex-1 space-y-2 break-words">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <h2 className="text-lg font-semibold sm:text-xl">
-                          Study {study.id}
-                        </h2>
-                        {isStudyCompleted(participationByStudy.get(study.id)) ? (
-                          <span className="rounded-full bg-[var(--accent)] px-3 py-1 text-xs font-semibold text-[var(--accent-contrast)]">
-                            Completed
-                          </span>
-                        ) : participationByStudy.get(study.id)?.started_at ? (
-                          <span className="text-xs font-semibold text-[var(--muted)]">In progress</span>
-                        ) : null}
-                      </div>
-                      <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-sm leading-6 text-[var(--muted)]">
-                        <dt>Start</dt>
-                        <dd>
-                          {study.start_datetime_utc ? (
-                            <LocalDateTime value={study.start_datetime_utc} />
-                          ) : "No start date"}
-                        </dd>
-                        <dt>End</dt>
-                        <dd>
-                          {study.end_datetime_utc ? (
-                            <LocalDateTime value={study.end_datetime_utc} />
-                          ) : "No end date"}
-                        </dd>
-                      </dl>
-                    </div>
-                    <ArrowRightIcon
-                      aria-hidden
-                      className="h-5 w-5 shrink-0 text-[var(--accent-strong)]"
-                    />
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </>
-        )}
         <Link
           href="/caption-lab"
           prefetch={false}
-          className="glass-panel mt-6 flex items-center gap-4 rounded-2xl p-5 transition hover:border-[var(--accent)] hover:bg-[var(--surface-muted)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent-strong)] sm:p-6"
+          className="glass-panel flex items-center gap-4 rounded-2xl p-5 transition hover:border-[var(--accent)] hover:bg-[var(--surface-muted)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent-strong)] sm:p-6"
         >
           <div className="min-w-0 flex-1 space-y-1">
             <h2 className="text-lg font-semibold sm:text-xl">Caption lab</h2>

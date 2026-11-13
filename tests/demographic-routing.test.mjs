@@ -371,14 +371,14 @@ test("only unanswered questions appear when no study is active", async () => {
 test("completed demographics lead to the no-studies state instead of stats", async () => {
   const scenario = createScenario({ answered: [1, 2] });
   const html = renderToStaticMarkup(await scenario.home({}));
-  assert.match(html, /No active studies/);
+  assert.match(html, /Start a new study/);
   assert.doesNotMatch(html, /Your Study Stats/);
 });
 
 test("answering one question and skipping the other does not create a redirect loop", async () => {
   const scenario = createScenario({ answered: [1], skipped: skips.encodeDemographicSkips(profileId, ["2"]) });
   await assert.rejects(scenario.survey({}), (error) => error instanceof Redirect && error.path === "/");
-  assert.match(renderToStaticMarkup(await scenario.home({})), /No active studies/);
+  assert.match(renderToStaticMarkup(await scenario.home({})), /Start a new study/);
 });
 
 test("skipping some questions still prompts for other unanswered questions", async () => {
@@ -416,7 +416,7 @@ test("login prompts NULL notifications before demographics and preserves a direc
 test("a fresh successful login clears notification skips and asks skipped NULL choices again", async () => {
   const cookie = encodeURIComponent(JSON.stringify({ profileId, preferences: ["notify_new_study_email"] }));
   const scenario = createScenario({ answered: [1, 2], notificationSkips: cookie, notificationPreferences: { notify_new_study_email: null } });
-  assert.match(renderToStaticMarkup(await scenario.home({})), /No active studies/);
+  assert.match(renderToStaticMarkup(await scenario.home({})), /Start a new study/);
   const response = await scenario.callback(new Request("https://example.test/auth/callback?code=test-code"));
   assert.equal(response.url.pathname, "/notification-preferences");
   assert.equal(scenario.cookieValues.has("notification_skips"), false);
@@ -450,7 +450,7 @@ test("the login callback keeps unsafe or recursive next paths on the application
 test("unavailable survey data fails open without a survey/home redirect loop", async (t) => {
   t.mock.method(console, "error", () => {});
   const scenario = createScenario({ loadError: true });
-  assert.match(renderToStaticMarkup(await scenario.home({})), /No active studies/);
+  assert.match(renderToStaticMarkup(await scenario.home({})), /Start a new study/);
 });
 
 function studyRow(id, overrides = {}) {
@@ -475,18 +475,12 @@ test("home lists public active studies after demographics and links to each stud
       studyRow(6, { is_private: null }),
     ],
   });
+  // Home no longer lists research studies; they stay reachable by direct link.
   const html = renderToStaticMarkup(await scenario.home({}));
-  assert.match(html, /Active studies/);
-  assert.match(html, /Study (?:<!-- -->)?1</);
-  assert.match(html, /Study (?:<!-- -->)?5</);
-  assert.doesNotMatch(html, /study-1|Description for study 1/);
-  assert.deepEqual([...html.matchAll(/dateTime="([^"]+)"/g)].map((match) => match[1]), [past, future]);
-  assert.match(html, /UTC<\/time>/);
-  assert.match(html, /No start date/);
-  assert.match(html, /No end date/);
-  assert.deepEqual([...html.matchAll(/href="(\/study\/\d+)"/g)].map((match) => match[1]), ["/study/1", "/study/5"]);
-  assert.equal(scenario.studyLoads, 1);
-  assert.deepEqual(scenario.captionLoads, [], "captions only load after choosing a study");
+  assert.doesNotMatch(html, /Active studies|href="\/study\//);
+  assert.match(html, /href="\/ai-study"/);
+  assert.equal(scenario.studyLoads, 0);
+  assert.deepEqual(scenario.captionLoads, [], "captions only load after opening a study");
 
   const page = await scenario.study({ params: Promise.resolve({ studyId: "1" }) });
   const studyContent = page.props.children.find((child) => child?.props?.id === "numeric-study-content");
@@ -499,19 +493,12 @@ test("home lists public active studies after demographics and links to each stud
   assert.doesNotMatch(studyHtml, /No studies available|No active studies/);
 });
 
-test("only private, upcoming, or expired studies produce the exact empty-state copy", async () => {
-  const scenario = createScenario({
-    answered: [1, 2],
-    studies: [
-      studyRow(1, { is_private: true }),
-      studyRow(2, { start_datetime_utc: new Date(Date.now() + 86_400_000).toISOString() }),
-      studyRow(3, { end_datetime_utc: new Date(Date.now() - 86_400_000).toISOString() }),
-    ],
-  });
+test("home shows the AI study, caption lab and history entries without research studies", async () => {
+  const scenario = createScenario({ answered: [1, 2], studies: [studyRow(1), studyRow(2)] });
   const html = renderToStaticMarkup(await scenario.home({}));
-  assert.match(html, />No active studies<\/h2>/);
-  assert.match(html, /href="\/ai-study"/);
-  assert.doesNotMatch(html, /href="\/study\//);
+  assert.match(html, /<h1[^>]*>Start a new study<\/h1>/);
+  assert.deepEqual([...html.matchAll(/href="([^"]+)"/g)].map((match) => match[1]), ["/ai-study", "/caption-lab", "/history"]);
+  assert.doesNotMatch(html, /No active studies|Study 1/);
 });
 
 test("active study windows include their boundaries and allow an open start or end", async () => {
@@ -530,35 +517,10 @@ test("active study windows include their boundaries and allow an open start or e
   assert.deepEqual(result.studies.map((study) => study.id), [1, 2, 3, 4]);
 });
 
-test("a failed study lookup shows a load error instead of claiming there are no active studies", async (t) => {
-  t.mock.method(console, "error", () => {});
-  const scenario = createScenario({ answered: [1, 2], studyLoadError: true });
-  const html = renderToStaticMarkup(await scenario.home({}));
-  assert.match(html, /couldn&#x27;t load studies/);
-  assert.doesNotMatch(html, /No active studies/);
-});
-
 test("malformed skip cookies are ignored", () => {
   for (const value of [undefined, "not-json", "%", "null", '{"questionIds":[]}']) {
     assert.deepEqual(skips.readDemographicSkips(value, profileId), []);
   }
-});
-
-test("home marks only the current user's started-and-ended studies Completed", async () => {
-  const scenario = createScenario({
-    answered: [1, 2], studies: [studyRow(1), studyRow(2), studyRow(3)],
-    participations: [
-      { profile_id: profileId, study_id: 1, started_at: "2026-10-01T12:00:00Z", ended_at: "2026-10-01T13:00:00Z" },
-      { profile_id: profileId, study_id: 2, started_at: "2026-10-01T12:00:00Z", ended_at: null },
-      { profile_id: "someone-else", study_id: 3, started_at: "2026-10-01T12:00:00Z", ended_at: "2026-10-01T13:00:00Z" },
-    ],
-  });
-  const html = renderToStaticMarkup(await scenario.home({}));
-  const cards = [...html.matchAll(/<li>(.*?)<\/li>/g)].map((match) => match[1]);
-  assert.match(cards[0], /Completed/);
-  assert.match(cards[1], /In progress/);
-  assert.doesNotMatch(cards[1], /Completed/);
-  assert.doesNotMatch(cards[2], /Completed|In progress/);
 });
 
 test("reopening a completed study shows saved stats without loading captions or offering start/end", async () => {
@@ -602,9 +564,6 @@ test("stats validation rejects incomplete or invalid data and keeps real zero va
 test("progress lookup failures are visible and do not open an untracked study", async (t) => {
   t.mock.method(console, "error", () => {});
   const scenario = createScenario({ answered: [1, 2], studies: [studyRow(1)], participationLoadError: true });
-  const home = renderToStaticMarkup(await scenario.home({}));
-  assert.match(home, /couldn&#x27;t load your study completion status/);
-  assert.match(home, /href="\/study\/1"/);
   const study = renderToStaticMarkup(await scenario.study({ params: Promise.resolve({ studyId: "1" }) }));
   assert.match(study, /couldn&#x27;t load your study progress/);
   assert.deepEqual(scenario.captionLoads, []);
