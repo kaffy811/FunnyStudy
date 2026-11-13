@@ -167,7 +167,7 @@ async function storeUpload(supabase: Awaited<ReturnType<typeof createClient>>, p
   return data.id as string;
 }
 
-/** Saves a caption (with its photo) to Your history, or removes it. */
+/** Saves a caption (with its photo) to Your history as a liked pick, or removes it. */
 export async function saveLabCaption(input: { id: number; saved: boolean }) {
   const { id, saved } = input ?? {};
   if (!Number.isSafeInteger(id) || id <= 0 || typeof saved !== "boolean") {
@@ -179,7 +179,8 @@ export async function saveLabCaption(input: { id: number; saved: boolean }) {
 
   const { data, error } = await supabase
     .from("ai_generated_captions")
-    .update({ saved_datetime_utc: saved ? new Date().toISOString() : null })
+    // Saving a caption means the participant liked it.
+    .update(saved ? { saved_datetime_utc: new Date().toISOString(), rating: 1 } : { saved_datetime_utc: null })
     .eq("id", id)
     .eq("profile_id", user.id)
     .select("id");

@@ -3,7 +3,7 @@
 import { useState, type ChangeEvent } from "react";
 import Link from "next/link";
 
-import { generateLabCaptions, rateLabCaption, saveLabCaption, type LabCaption } from "@/app/caption-lab/actions";
+import { generateLabCaptions, saveLabCaption, type LabCaption } from "@/app/caption-lab/actions";
 import { MAX_UPLOAD_DATA_URL_CHARS } from "@/lib/caption-generation";
 
 type Props = {
@@ -35,10 +35,15 @@ export function CaptionLab({ configured, personalizationConsent }: Props) {
   const [captions, setCaptions] = useState<LabCaption[]>([]);
   const [personalized, setPersonalized] = useState<boolean | null>(null);
   const [droppedCount, setDroppedCount] = useState(0);
+  const [chosenId, setChosenId] = useState<number | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [savedNotice, setSavedNotice] = useState(false);
 
   function choose(next: Selection) {
     setSelection(next);
     setCaptions([]);
+    setChosenId(null);
+    setSavedNotice(false);
     setError(null);
   }
 
@@ -59,37 +64,47 @@ export function CaptionLab({ configured, personalizationConsent }: Props) {
     if (!selection || pending) return;
     setPending(true);
     setError(null);
+    setSavedNotice(false);
     const result = await generateLabCaptions({ source: "upload", dataUrl: selection.dataUrl });
     setPending(false);
     if (!result.success) return setError(result.error);
     setCaptions(result.captions);
+    setChosenId(null);
     setPersonalized(result.personalized);
     setDroppedCount(result.droppedCount);
   }
 
-  async function rate(caption: LabCaption, rating: -1 | 1) {
-    const next = caption.rating === rating ? null : rating;
-    setCaptions((list) => list.map((item) => (item.id === caption.id ? { ...item, rating: next } : item)));
-    const result = await rateLabCaption({ id: caption.id, rating: next });
-    if (!result.success) {
-      setCaptions((list) => list.map((item) => (item.id === caption.id ? { ...item, rating: caption.rating } : item)));
-      setError(result.error);
-    }
+  function reset() {
+    setSelection(null);
+    setCaptions([]);
+    setChosenId(null);
+    setPersonalized(null);
+    setDroppedCount(0);
+    setError(null);
   }
 
-  async function toggleSave(caption: LabCaption) {
-    const saved = !caption.saved;
-    setCaptions((list) => list.map((item) => (item.id === caption.id ? { ...item, saved } : item)));
-    const result = await saveLabCaption({ id: caption.id, saved });
-    if (!result.success) {
-      setCaptions((list) => list.map((item) => (item.id === caption.id ? { ...item, saved: caption.saved } : item)));
-      setError(result.error);
-    }
+  /** Saving the chosen caption also counts as liking it; then the page clears. */
+  async function saveChosen() {
+    if (chosenId === null || saving) return;
+    setSaving(true);
+    setError(null);
+    const result = await saveLabCaption({ id: chosenId, saved: true });
+    setSaving(false);
+    if (!result.success) return setError(result.error);
+    reset();
+    setSavedNotice(true);
   }
 
-  const ratingClass = (active: boolean) =>
-    `min-h-10 rounded-full border px-4 text-sm font-semibold transition ${
-      active ? "border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-contrast)]" : "border-[var(--panel-border)] hover:border-[var(--accent)]"
+  function done() {
+    reset();
+    setSavedNotice(false);
+  }
+
+  const captionClass = (active: boolean) =>
+    `w-full rounded-2xl border-2 p-4 text-left text-base font-semibold leading-6 transition sm:text-lg ${
+      active
+        ? "border-[var(--accent-strong)] bg-[var(--accent)] text-[var(--accent-contrast)] shadow-md"
+        : "border-[var(--panel-border)] hover:border-[var(--accent)]"
     }`;
 
   return (
@@ -98,8 +113,8 @@ export function CaptionLab({ configured, personalizationConsent }: Props) {
         <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[var(--soft)]">Caption lab</p>
         <h1 className="text-3xl font-black sm:text-4xl">Caption your funny photos</h1>
         <p className="text-sm leading-6 text-[var(--muted)] sm:text-base">
-          Got a funny photo? Upload it and the AI writes {4} captions in different humor styles. Rate them and your humor
-          profile learns from it.
+          Got a funny photo? Upload it and the AI writes {4} captions in different humor styles. Pick the one you like best
+          and save it to Your history; your humor profile learns from it.
         </p>
         <p className="text-sm leading-6 text-[var(--muted)]">
           {personalizationConsent ? (
@@ -115,6 +130,13 @@ export function CaptionLab({ configured, personalizationConsent }: Props) {
 
       {!configured ? (
         <p role="status" className="glass-panel rounded-2xl p-5 text-sm">AI captions aren&apos;t set up on this site yet. Please check back later.</p>
+      ) : null}
+
+      {savedNotice ? (
+        <p role="status" className="glass-panel rounded-2xl border border-[var(--accent)] p-4 text-sm font-semibold">
+          ★ Caption saved. You can find it in{" "}
+          <Link href="/history#saved-heading" className="underline">Your history → Saved captions</Link>.
+        </p>
       ) : null}
 
       <section aria-labelledby="pick-heading" className="glass-panel space-y-4 rounded-[24px] p-5 sm:p-6">
@@ -146,7 +168,7 @@ export function CaptionLab({ configured, personalizationConsent }: Props) {
       {selection && (captions.length > 0 || pending) ? (
         <section aria-labelledby="results-heading" aria-busy={pending} className="glass-panel space-y-4 rounded-[24px] p-5 sm:p-6">
           <div className="flex flex-wrap items-baseline justify-between gap-2">
-            <h2 id="results-heading" className="text-lg font-bold">3. Rate the captions</h2>
+            <h2 id="results-heading" className="text-lg font-bold">3. Pick your favorite</h2>
             {personalized !== null && !pending ? (
               <span className="text-xs font-semibold text-[var(--muted)]">{personalized ? "Personalized for you" : "Not personalized"}</span>
             ) : null}
@@ -154,24 +176,19 @@ export function CaptionLab({ configured, personalizationConsent }: Props) {
           {pending ? (
             <p className="text-sm text-[var(--muted)]">Writing captions…</p>
           ) : (
-            <ul className="space-y-3">
+            <ul className="space-y-3" role="radiogroup" aria-label="Captions">
               {captions.map((caption) => (
-                <li key={caption.id} className="rounded-2xl border border-[var(--panel-border)] p-4">
-                  <p className="text-base font-semibold leading-6 sm:text-lg">{caption.text}</p>
-                  <div className="mt-3 flex flex-wrap items-center gap-2">
-                    <button type="button" aria-pressed={caption.rating === 1} onClick={() => void rate(caption, 1)} className={ratingClass(caption.rating === 1)}>
-                      Funny
-                    </button>
-                    <button type="button" aria-pressed={caption.rating === -1} onClick={() => void rate(caption, -1)} className={ratingClass(caption.rating === -1)}>
-                      Not for me
-                    </button>
-                    <button type="button" aria-pressed={caption.saved} onClick={() => void toggleSave(caption)} className={ratingClass(caption.saved)}>
-                      {caption.saved ? "★ Saved" : "☆ Save"}
-                    </button>
-                    {caption.rating !== null ? (
-                      <span className="text-xs text-[var(--muted)]">Style: {caption.styleName}</span>
-                    ) : null}
-                  </div>
+                <li key={caption.id}>
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={chosenId === caption.id}
+                    onClick={() => setChosenId(chosenId === caption.id ? null : caption.id)}
+                    className={captionClass(chosenId === caption.id)}
+                  >
+                    {chosenId === caption.id ? <span className="mb-1 block text-xs font-bold uppercase tracking-wide">✓ Your pick</span> : null}
+                    {caption.text}
+                  </button>
                 </li>
               ))}
             </ul>
@@ -181,7 +198,28 @@ export function CaptionLab({ configured, personalizationConsent }: Props) {
           ) : null}
           {/* eslint-disable-next-line @next/next/no-img-element -- whole image, captions above it */}
           <img src={selection.dataUrl} alt="" className="max-h-[40svh] w-full rounded-2xl border border-[var(--panel-border)] bg-[var(--surface-muted)] object-contain" />
+          {!pending ? (
+            <button
+              type="button"
+              disabled={chosenId === null || saving}
+              onClick={() => void saveChosen()}
+              className="min-h-12 w-full rounded-xl bg-[var(--accent)] px-5 font-semibold text-[var(--accent-contrast)] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {saving ? "Saving…" : chosenId === null ? "Pick a caption to save" : "☆ Save my pick"}
+            </button>
+          ) : null}
         </section>
+      ) : null}
+
+      {selection || captions.length > 0 ? (
+        <button
+          type="button"
+          disabled={pending || saving}
+          onClick={done}
+          className="min-h-12 w-full rounded-xl border border-[var(--panel-border)] px-5 font-semibold transition hover:border-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          Done
+        </button>
       ) : null}
     </div>
   );
