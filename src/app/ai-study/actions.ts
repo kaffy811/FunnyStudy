@@ -163,7 +163,6 @@ export async function startAiStudy(): Promise<Result<{ sessionId: string }>> {
       .eq("id", session.id);
     return { success: false, error: "We wrote captions but couldn't save them. Please try again." };
   }
-  revalidatePath("/");
   return { success: true, sessionId: session.id };
 }
 
@@ -287,8 +286,9 @@ export async function endAiStudy(sessionId: string): Promise<Result<{ summary: s
     .upsert({ profile_id: user.id, summary: finalSummary, source: "ai" }, { onConflict: "profile_id" });
   if (summaryError) console.error("[endAiStudy] save profile summary failed", summaryError);
 
-  revalidatePath("/");
-  revalidatePath("/history");
+  // No revalidatePath here: it would re-render /ai-study (now without a
+  // current study) and remount the flow before the summary is shown. The
+  // home and history pages are dynamic, so they read fresh data anyway.
   return { success: true, summary: finalSummary };
 }
 
