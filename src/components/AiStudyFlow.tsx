@@ -238,7 +238,7 @@ export function AiStudyFlow({ sessionId, items: initialItems, configured, person
   const optionClass = (selected: boolean) =>
     `w-full rounded-2xl border-2 px-4 py-3 text-left text-base font-semibold leading-6 transition sm:text-lg ${
       selected
-        ? "border-[var(--accent)] bg-[color-mix(in_srgb,_var(--accent)_16%,_transparent)]"
+        ? "border-[var(--accent-strong)] bg-[var(--accent)] text-[var(--accent-contrast)] shadow-md"
         : "border-[var(--panel-border)] bg-[var(--surface-muted)] hover:border-[var(--accent)]"
     }`;
 
@@ -267,9 +267,11 @@ export function AiStudyFlow({ sessionId, items: initialItems, configured, person
           <p className="shrink-0 text-center text-xs font-semibold uppercase tracking-[0.18em] text-[var(--soft)]">Which caption is funnier?</p>
           <div data-native-scroll-region="true" className="flex max-h-[45%] shrink-0 flex-col gap-2 overflow-y-auto">
             <button type="button" aria-pressed={current.choice === "a"} onClick={() => void choose(current, "a")} className={optionClass(current.choice === "a")}>
+              {current.choice === "a" ? <span className="mb-1 block text-xs font-bold uppercase tracking-[0.16em]">✓ Your pick</span> : null}
               {current.a.caption}
             </button>
             <button type="button" aria-pressed={current.choice === "b"} onClick={() => void choose(current, "b")} className={optionClass(current.choice === "b")}>
+              {current.choice === "b" ? <span className="mb-1 block text-xs font-bold uppercase tracking-[0.16em]">✓ Your pick</span> : null}
               {current.b.caption}
             </button>
           </div>

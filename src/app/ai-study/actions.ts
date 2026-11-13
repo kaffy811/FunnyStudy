@@ -117,6 +117,7 @@ export async function startAiStudy(): Promise<Result<{ sessionId: string }>> {
       imageId: safe[i].id,
       styles: stylePair,
     }));
+    // Parallel requests; one failed image is skipped instead of failing the study.
     const batches = await Promise.all(
       chunk(planned, AI_STUDY_BATCH_SIZE).map(async (batch) => {
         const content = await createChatCompletion({
@@ -127,7 +128,10 @@ export async function startAiStudy(): Promise<Result<{ sessionId: string }>> {
             batch.map((item) => item.slot),
             styles.map((style) => style.slug)
           ),
-          maxTokens: 1500,
+          maxTokens: 300 * batch.length,
+        }).catch((error) => {
+          console.error("[startAiStudy] caption request failed", error);
+          return null;
         });
         return parseStudyCaptions(content, new Map(batch.map((item) => [item.slot, item.styles.map((style) => style.slug)])));
       })

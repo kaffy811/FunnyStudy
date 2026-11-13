@@ -1,9 +1,10 @@
 // AI studies: pure helpers (no runtime imports so tests can load this file directly).
 
 /** Bump when a prompt changes so results can be compared per prompt version. */
-export const AI_STUDY_PROMPT_VERSION = "study-v2-ab";
+export const AI_STUDY_PROMPT_VERSION = "study-v2-ab1";
 export const AI_STUDY_SIZE = 10;
-export const AI_STUDY_BATCH_SIZE = 5;
+/** One image per request: batching several images made the model mix up which caption belongs to which image. */
+export const AI_STUDY_BATCH_SIZE = 1;
 /** Images requested from the pool; extra ones replace images that fail moderation. */
 export const AI_STUDY_CANDIDATES = 16;
 export const DAILY_AI_STUDY_LIMIT = 5;
