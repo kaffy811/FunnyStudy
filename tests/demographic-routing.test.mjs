@@ -226,6 +226,7 @@ function createScenario({
   studies = [], studyLoadError = false,
   participations = [], participationLoadError = false,
   notificationPreferences = {}, notificationSkips, profileLoadError = false, exchangeError = false,
+  aiSessions = [], aiCaptions = [],
 } = {}) {
   const cookieValues = new Map();
   if (notificationSkips) cookieValues.set("notification_skips", notificationSkips);
@@ -247,6 +248,8 @@ function createScenario({
     demographic_user_responses: answered.map((id) => ({
       user_id: profileId, answer_question_mapping_id: id,
     })),
+    ai_study_sessions: aiSessions,
+    ai_generated_captions: aiCaptions,
   };
   let studyLoads = 0;
   const captionLoads = [];
@@ -282,6 +285,7 @@ function createScenario({
           filters.push((row) => row[key] === value);
           return query;
         },
+        is: (key, value) => { filters.push((row) => row[key] === value); return query; },
         or: (expression) => {
           const alternatives = expression.split(",").map((condition) => {
             const [, key, operator, value] = condition.match(/^([^.]+)\.(lte|gte|is)\.(.+)$/);
@@ -499,6 +503,23 @@ test("home shows the AI study, caption lab and history entries without research 
   assert.match(html, /<h1[^>]*>Start a new study<\/h1>/);
   assert.deepEqual([...html.matchAll(/href="([^"]+)"/g)].map((match) => match[1]), ["/ai-study", "/caption-lab", "/history"]);
   assert.doesNotMatch(html, /No active studies|Study 1/);
+});
+
+test("home shows a continue bar under Start a new study for an unfinished study", async () => {
+  const open = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+  const scenario = createScenario({
+    answered: [1, 2],
+    aiSessions: [
+      { id: open, profile_id: profileId, created_datetime_utc: "2026-11-10T12:00:00.000Z", ended_datetime_utc: null },
+      { id: "ffffffff-bbbb-cccc-dddd-eeeeeeeeeeee", profile_id: profileId, created_datetime_utc: "2026-11-11T12:00:00.000Z", ended_datetime_utc: "2026-11-11T13:00:00.000Z" },
+    ],
+    aiCaptions: [1, 2, 3, 4, 5, 6].map((position) => ({ session_id: open, position, rating: position <= 2 ? (position === 1 ? 1 : -1) : null })),
+  });
+  const html = renderToStaticMarkup(await scenario.home({}));
+  assert.match(html, /<h1[^>]*>Start a new study<\/h1>/);
+  assert.match(html, /Continue your study/);
+  assert.match(html, /1\/3 answered/);
+  assert.deepEqual([...html.matchAll(/href="([^"]+)"/g)].map((match) => match[1]), ["/ai-study", `/ai-study?session=${open}`, "/caption-lab", "/history"]);
 });
 
 test("active study windows include their boundaries and allow an open start or end", async () => {

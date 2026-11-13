@@ -5,9 +5,10 @@ import { redirect } from "next/navigation";
 import { signOut } from "@/app/profile-actions";
 import { AccountMenu } from "@/components/AccountMenu";
 import { AiStudyFlow, type AiStudyPair } from "@/components/AiStudyFlow";
-import { choiceFromRatings, isCurrentStudy } from "@/lib/ai-study";
+import { choiceFromRatings } from "@/lib/ai-study";
 import { openAiConfig } from "@/lib/openai";
 import { createClient } from "@/lib/supabase/server";
+import { resolveImageUrls } from "@/lib/user-images";
 
 export const dynamic = "force-dynamic";
 // Starting a study moderates images and writes captions with OpenAI.
@@ -15,26 +16,31 @@ export const maxDuration = 60;
 
 type CaptionRow = { id: number; position: number; caption: string; image_url: string; rating: number | null; viewed_datetime_utc: string | null };
 
-export default async function AiStudyPage() {
+export default async function AiStudyPage({ searchParams }: { searchParams: Promise<{ session?: string | string[] }> }) {
+  const requested = (await searchParams).session;
+  const requestedId = typeof requested === "string" && /^[0-9a-f-]{36}$/i.test(requested) ? requested : null;
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
-  const [{ data: profile }, { data: latest }, { data: consent }] = await Promise.all([
+  const [{ data: profile }, { data: requestedSession }, { data: consent }] = await Promise.all([
     supabase.from("profiles").select("first_name, last_name").eq("id", user.id).single(),
-    supabase
-      .from("ai_study_sessions")
-      .select("id, created_datetime_utc, ended_datetime_utc")
-      .eq("profile_id", user.id)
-      .order("created_datetime_utc", { ascending: false })
-      .limit(1)
-      .maybeSingle(),
+    requestedId
+      ? supabase
+          .from("ai_study_sessions")
+          .select("id, ended_datetime_utc")
+          .eq("id", requestedId)
+          .eq("profile_id", user.id)
+          .maybeSingle()
+      : Promise.resolve({ data: null }),
     supabase.from("style_preference_feedback").select("personalization_consent").eq("profile_id", user.id).maybeSingle(),
   ]);
   const displayName =
     [profile?.first_name, profile?.last_name].filter(Boolean).join(" ").trim() || user.email || "your account";
 
-  const sessionId = latest && isCurrentStudy(latest, user.last_sign_in_at) ? (latest.id as string) : null;
+  // `?session=<id>` opens one of the participant's unfinished studies; without
+  // it (or for a finished/unknown one) the page offers a new study.
+  const sessionId = requestedSession && !requestedSession.ended_datetime_utc ? (requestedSession.id as string) : null;
   const items: AiStudyPair[] = [];
   if (sessionId) {
     const { data, error } = await supabase
@@ -43,7 +49,9 @@ export default async function AiStudyPage() {
       .eq("session_id", sessionId)
       .order("position");
     if (error) console.error("[AiStudyPage] load captions failed", error);
-    const byPosition = new Map(((data ?? []) as CaptionRow[]).map((row) => [row.position, row]));
+    const rows = (data ?? []) as CaptionRow[];
+    const urls = await resolveImageUrls(supabase, rows.map((row) => row.image_url));
+    const byPosition = new Map(rows.map((row, i) => [row.position, { ...row, image_url: urls[i] ?? "" }]));
     for (let item = 1; byPosition.has(item * 2 - 1) && byPosition.has(item * 2); item += 1) {
       const a = byPosition.get(item * 2 - 1)!;
       const b = byPosition.get(item * 2)!;

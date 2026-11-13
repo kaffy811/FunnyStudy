@@ -133,3 +133,38 @@ test("isCurrentStudy only continues an unfinished study started since the latest
   assert.equal(study.isCurrentStudy({ created_datetime_utc: "2026-11-12T10:05:00Z", ended_datetime_utc: "2026-11-12T10:10:00Z" }, signIn), false);
   assert.equal(study.isCurrentStudy(null, signIn), false);
 });
+
+const userImages = loadModule("src/lib/user-images.ts");
+
+test("user image refs, paths and data URLs", async () => {
+  const profile = "11111111-2222-3333-4444-555555555555";
+  assert.equal(userImages.newUserImagePath(profile, "abc", "image/png"), `${profile}/abc.png`);
+  assert.equal(userImages.newUserImagePath(profile, "abc", "image/webp"), `${profile}/abc.webp`);
+  assert.equal(userImages.newUserImagePath(profile, "abc", "image/jpeg"), `${profile}/abc.jpg`);
+  const ref = userImages.toUserImageRef(`${profile}/abc.jpg`);
+  assert.equal(userImages.userImagePath(ref), `${profile}/abc.jpg`);
+  assert.equal(userImages.userImagePath("https://images.crackd.ai/x.jpg"), null);
+  assert.equal(userImages.userImagePath(null), null);
+
+  const decoded = userImages.decodeDataUrl("data:image/png;base64,AQID");
+  assert.equal(decoded.contentType, "image/png");
+  assert.deepEqual([...decoded.bytes], [1, 2, 3]);
+  assert.equal(userImages.decodeDataUrl("not a data url"), null);
+
+  const calls = [];
+  const fakeClient = {
+    storage: {
+      from: (bucket) => ({
+        createSignedUrls: async (paths) => {
+          calls.push([bucket, paths]);
+          return { data: paths.map((path) => ({ path, signedUrl: `signed:${path}` })), error: null };
+        },
+      }),
+    },
+  };
+  const resolved = await userImages.resolveImageUrls(fakeClient, [ref, "https://a/b.jpg", null, ref]);
+  assert.deepEqual(resolved, [`signed:${profile}/abc.jpg`, "https://a/b.jpg", null, `signed:${profile}/abc.jpg`]);
+  assert.deepEqual(calls, [["user-images", [`${profile}/abc.jpg`]]]);
+  assert.deepEqual(await userImages.resolveImageUrls(fakeClient, ["https://a/b.jpg"]), ["https://a/b.jpg"]);
+  assert.equal(calls.length, 1);
+});

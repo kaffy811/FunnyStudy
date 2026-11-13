@@ -9,6 +9,7 @@ import { LocalDateTime } from "@/components/LocalDateTime";
 import { PersonalizationToggle } from "@/components/PersonalizationToggle";
 import { fallbackSummary, styleStats, type StudyStyle } from "@/lib/ai-study";
 import { createClient } from "@/lib/supabase/server";
+import { resolveImageUrls, toUserImageRef } from "@/lib/user-images";
 
 export const dynamic = "force-dynamic";
 
@@ -24,6 +25,14 @@ type CaptionRow = {
   personalized: boolean;
   viewed_datetime_utc: string | null;
   created_datetime_utc: string;
+};
+type SavedRow = {
+  id: number;
+  caption: string;
+  style_id: number;
+  image_url: string | null;
+  saved_datetime_utc: string;
+  user_images: { storage_path: string } | { storage_path: string }[] | null;
 };
 type SessionRow = {
   id: string;
@@ -41,7 +50,7 @@ export default async function HistoryPage() {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
-  const [{ data: profile }, styles, sessions, captions, savedSummary, consent] = await Promise.all([
+  const [{ data: profile }, styles, sessions, captions, savedSummary, consent, savedCaptions] = await Promise.all([
     supabase.from("profiles").select("first_name, last_name").eq("id", user.id).single(),
     supabase.from("humor_styles").select("id, slug, name, description").order("id"),
     supabase
@@ -59,12 +68,20 @@ export default async function HistoryPage() {
       .limit(1000),
     supabase.from("profile_humor_summaries").select("summary, source").eq("profile_id", user.id).maybeSingle(),
     supabase.from("style_preference_feedback").select("personalization_consent").eq("profile_id", user.id).maybeSingle(),
+    supabase
+      .from("ai_generated_captions")
+      .select("id, caption, style_id, image_url, saved_datetime_utc, user_images(storage_path)")
+      .eq("profile_id", user.id)
+      .not("saved_datetime_utc", "is", null)
+      .order("saved_datetime_utc", { ascending: false })
+      .limit(100),
   ]);
   for (const [label, error] of [
     ["styles", styles.error],
     ["sessions", sessions.error],
     ["captions", captions.error],
     ["summary", savedSummary.error],
+    ["saved captions", savedCaptions.error],
   ] as const) {
     if (error) console.error(`[HistoryPage] load ${label} failed`, error);
   }
@@ -86,6 +103,16 @@ export default async function HistoryPage() {
   }
   const studySessions = (sessions.data ?? []) as SessionRow[];
   const summarySource = savedSummary.data?.source === "ai" ? "ai" : "user";
+
+  // Saved caption-lab captions show their stored photo; study images that are
+  // the participant's own photos are stored as references. Both need signed URLs.
+  const saved = ((savedCaptions.data ?? []) as unknown as SavedRow[]).map((row) => {
+    const photo = Array.isArray(row.user_images) ? row.user_images[0] : row.user_images;
+    return { ...row, imageRef: row.image_url ?? (photo?.storage_path ? toUserImageRef(photo.storage_path) : null) };
+  });
+  const rawUrls = [...new Set([...rows.map((row) => row.image_url), ...saved.map((row) => row.imageRef)].filter((url): url is string => Boolean(url)))];
+  const resolvedUrls = await resolveImageUrls(supabase, rawUrls);
+  const imageSrc = new Map(rawUrls.map((url, i) => [url, resolvedUrls[i]]));
 
   return (
     <div className="relative flex h-[100svh] min-h-[100svh] flex-col overflow-hidden px-4 py-3 text-[var(--foreground)] sm:px-6 sm:py-4">
@@ -137,10 +164,42 @@ export default async function HistoryPage() {
           </div>
         </section>
 
+        <section aria-labelledby="saved-heading" className={sectionClass}>
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h2 id="saved-heading" className="text-xl font-bold">Saved captions</h2>
+            <Link href="/caption-lab" className="text-sm font-semibold underline">Go to Caption lab</Link>
+          </div>
+          {savedCaptions.error ? (
+            <p className="mt-3 text-sm text-[var(--error-text)]">We couldn&apos;t load your saved captions.</p>
+          ) : saved.length === 0 ? (
+            <p className="mt-3 text-sm text-[var(--muted)]">Tap <strong>Save</strong> on a Caption lab caption to keep it here with its photo.</p>
+          ) : (
+            <ul className="mt-4 grid gap-3 sm:grid-cols-2">
+              {saved.map((row) => {
+                const src = row.imageRef ? imageSrc.get(row.imageRef) : null;
+                return (
+                  <li key={row.id} className="flex flex-col gap-2 rounded-2xl border border-[var(--panel-border)] p-3">
+                    <p className="font-semibold leading-6">{row.caption}</p>
+                    {src ? (
+                      // eslint-disable-next-line @next/next/no-img-element -- whole private photo via signed URL
+                      <img src={src} alt="" loading="lazy" className="max-h-56 w-full rounded-xl bg-[var(--surface-muted)] object-contain" />
+                    ) : (
+                      <p className="text-xs text-[var(--muted)]">Photo not available</p>
+                    )}
+                    <p className="text-xs text-[var(--muted)]">
+                      {styleNames.get(row.style_id) ?? "Unknown style"} · saved <LocalDateTime value={row.saved_datetime_utc} />
+                    </p>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </section>
+
         <section aria-labelledby="ai-studies-heading" className={sectionClass}>
           <div className="flex flex-wrap items-baseline justify-between gap-2">
             <h2 id="ai-studies-heading" className="text-xl font-bold">Past studies</h2>
-            <Link href="/ai-study" className="text-sm font-semibold underline">Go to your study</Link>
+            <Link href="/ai-study" className="text-sm font-semibold underline">Start a new study</Link>
           </div>
           {sessions.error ? (
             <p className="mt-3 text-sm text-[var(--error-text)]">We couldn&apos;t load your studies.</p>
@@ -169,7 +228,12 @@ export default async function HistoryPage() {
                             {session.ended_datetime_utc ? (
                               <span className="rounded-full bg-[var(--accent)] px-2.5 py-0.5 text-xs font-semibold text-[var(--accent-contrast)]">Completed</span>
                             ) : (
-                              <span className="text-xs font-semibold text-[var(--muted)]">Not finished</span>
+                              <>
+                                <span className="text-xs font-semibold text-[var(--muted)]">Not finished</span>
+                                <Link href={`/ai-study?session=${session.id}`} prefetch={false} className="text-xs font-semibold underline">
+                                  Continue
+                                </Link>
+                              </>
                             )}
                           </div>
                           <p className="text-[var(--muted)]">Picked a favorite for {liked} of {total} images</p>
@@ -192,9 +256,9 @@ export default async function HistoryPage() {
                                 <li className="text-xs text-[var(--muted)]">You picked neither</li>
                               ) : null}
                             </ul>
-                            {image.imageUrl ? (
+                            {image.imageUrl && imageSrc.get(image.imageUrl) ? (
                               // eslint-disable-next-line @next/next/no-img-element -- whole external study images
-                              <img src={image.imageUrl} alt="" loading="lazy" className="h-16 w-16 shrink-0 rounded-lg bg-[var(--surface-muted)] object-contain" />
+                              <img src={imageSrc.get(image.imageUrl)!} alt="" loading="lazy" className="h-16 w-16 shrink-0 rounded-lg bg-[var(--surface-muted)] object-contain" />
                             ) : null}
                           </li>
                         ))}

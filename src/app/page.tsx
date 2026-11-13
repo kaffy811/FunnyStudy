@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { ArrowRightIcon } from "@heroicons/react/24/outline";
 
 import { AccountMenu } from "@/components/AccountMenu";
-import { isCurrentStudy } from "@/lib/ai-study";
+import { LocalDateTime } from "@/components/LocalDateTime";
 import { SubmitButton } from "@/components/SubmitButton";
 import { ThemeMenu } from "@/components/theme/ThemeMenu";
 import { buildDemographicsPath, hasPendingDemographicQuestions } from "@/lib/demographics";
@@ -78,14 +78,27 @@ export default async function Home({
     );
   }
 
-  const { data: latestAiStudy } = await supabase
+  // The newest unfinished study (from any visit) gets a small "continue" bar.
+  const { data: openStudy } = await supabase
     .from("ai_study_sessions")
-    .select("id, created_datetime_utc, ended_datetime_utc")
+    .select("id, created_datetime_utc")
     .eq("profile_id", user.id)
+    .is("ended_datetime_utc", null)
     .order("created_datetime_utc", { ascending: false })
     .limit(1)
     .maybeSingle();
-  const aiStudyInProgress = isCurrentStudy(latestAiStudy, user.last_sign_in_at);
+  let openProgress: { answered: number; total: number } | null = null;
+  if (openStudy) {
+    const { data: openRows } = await supabase
+      .from("ai_generated_captions")
+      .select("position, rating")
+      .eq("session_id", openStudy.id);
+    const rows = (openRows ?? []) as { position: number; rating: number | null }[];
+    openProgress = {
+      total: Math.floor(rows.length / 2),
+      answered: rows.filter((row) => row.position % 2 === 1 && row.rating !== null).length,
+    };
+  }
   return (
     <div
       id="home-root"
@@ -98,13 +111,13 @@ export default async function Home({
         <Link
           href="/ai-study"
           prefetch={false}
-          className="glass-panel mb-6 flex items-center gap-4 rounded-[28px] border-2 border-[var(--accent)] p-6 transition hover:bg-[var(--surface-muted)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent-strong)] sm:p-8"
+          className="glass-panel flex items-center gap-4 rounded-[28px] border-2 border-[var(--accent)] p-6 transition hover:bg-[var(--surface-muted)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent-strong)] sm:p-8"
         >
           <div className="min-w-0 flex-1 space-y-2">
             <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[var(--soft)]">
-              {aiStudyInProgress ? "In progress" : "New for this visit"}
+              New study
             </p>
-            <h1 className="text-2xl font-black sm:text-3xl">{aiStudyInProgress ? "Continue your study" : "Start a new study"}</h1>
+            <h1 className="text-2xl font-black sm:text-3xl">Start a new study</h1>
             <p className="text-sm leading-6 text-[var(--muted)] sm:text-base">
               About 10 random images, each with two fresh AI captions in different humor styles. Pick the funnier one;
               when you finish, the AI updates your humor profile.
@@ -112,6 +125,22 @@ export default async function Home({
           </div>
           <ArrowRightIcon aria-hidden className="h-6 w-6 shrink-0 text-[var(--accent-strong)]" />
         </Link>
+        {openStudy && openProgress && openProgress.total > 0 ? (
+          <Link
+            href={`/ai-study?session=${openStudy.id}`}
+            prefetch={false}
+            className="mt-3 flex items-center gap-3 rounded-2xl border border-[var(--accent)] bg-[var(--surface-muted)] px-4 py-3 text-sm transition hover:bg-[var(--panel-border)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent-strong)]"
+          >
+            <span className="min-w-0 flex-1">
+              <span className="font-semibold">Continue your study</span>
+              <span className="block text-xs text-[var(--muted)]">
+                Started <LocalDateTime value={openStudy.created_datetime_utc} /> · {openProgress.answered}/{openProgress.total} answered
+              </span>
+            </span>
+            <ArrowRightIcon aria-hidden className="h-5 w-5 shrink-0 text-[var(--accent-strong)]" />
+          </Link>
+        ) : null}
+        <div className="mb-6" />
         <Link
           href="/caption-lab"
           prefetch={false}

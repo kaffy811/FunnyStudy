@@ -15,18 +15,19 @@ import {
   AB_CHOICES,
   DAILY_AI_STUDY_LIMIT,
   fallbackSummary,
-  isCurrentStudy,
   parseStudyCaptions,
   parseSummary,
   studyCaptionResponseFormat,
   styleStats,
   summaryResponseFormat,
   pairPositions,
+  shuffle,
   type AbChoice,
   type CaptionSignal,
   type StudyStyle,
 } from "@/lib/ai-study";
 import { resolveCaptionImageUrl } from "@/lib/caption-images";
+import { signStoragePaths, toUserImageRef } from "@/lib/user-images";
 import { createChatCompletion, moderateImage, moderateTexts, openAiConfig } from "@/lib/openai";
 import { PERSONALIZATION_CONSENT_VERSION } from "@/lib/style-preferences";
 import { createClient } from "@/lib/supabase/server";
@@ -39,10 +40,13 @@ async function signedIn() {
   return { supabase, user };
 }
 
+/** Up to this many of the participant's own caption-lab photos join each study. */
+const OWN_IMAGES_PER_STUDY = 2;
+
 /**
- * Returns the current study (started since the latest sign-in and not ended),
- * or creates a new one: random study images, balanced random humor styles, one
- * AI caption per image. Only the participant's own JWT is used.
+ * Creates a new study: random study images (plus a couple of the participant's
+ * own caption-lab photos, when they have some), A/B humor-style pairs, and two
+ * AI captions per image. Only the participant's own JWT is used.
  */
 export async function startAiStudy(): Promise<Result<{ sessionId: string }>> {
   const config = openAiConfig();
@@ -50,21 +54,8 @@ export async function startAiStudy(): Promise<Result<{ sessionId: string }>> {
   const { supabase, user } = await signedIn();
   if (!user) return { success: false, error: "Please sign in to continue." };
 
-  const { data: latest, error: latestError } = await supabase
-    .from("ai_study_sessions")
-    .select("id, created_datetime_utc, ended_datetime_utc")
-    .eq("profile_id", user.id)
-    .order("created_datetime_utc", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (latestError) {
-    console.error("[startAiStudy] load latest failed", latestError);
-    return { success: false, error: "We couldn't start a study right now. Please try again." };
-  }
-  if (latest && isCurrentStudy(latest, user.last_sign_in_at)) return { success: true, sessionId: latest.id };
-
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-  const [{ count }, styleRows, recent, consentRow, summaryRow] = await Promise.all([
+  const [{ count }, styleRows, recent, consentRow, summaryRow, ownRows] = await Promise.all([
     supabase
       .from("ai_study_sessions")
       .select("id", { count: "exact", head: true })
@@ -73,13 +64,19 @@ export async function startAiStudy(): Promise<Result<{ sessionId: string }>> {
     supabase.from("humor_styles").select("id, slug, name, description").order("id"),
     supabase
       .from("ai_generated_captions")
-      .select("image_id")
+      .select("*")
       .eq("profile_id", user.id)
       .eq("image_source", "study")
       .order("created_datetime_utc", { ascending: false })
       .limit(60),
     supabase.from("style_preference_feedback").select("personalization_consent").eq("profile_id", user.id).maybeSingle(),
     supabase.from("profile_humor_summaries").select("summary").eq("profile_id", user.id).maybeSingle(),
+    supabase
+      .from("user_images")
+      .select("id, storage_path")
+      .eq("profile_id", user.id)
+      .order("created_datetime_utc", { ascending: false })
+      .limit(50),
   ]);
   if ((count ?? 0) >= DAILY_AI_STUDY_LIMIT) {
     return { success: false, error: "You've reached today's limit for new studies. Please come back tomorrow." };
@@ -87,7 +84,8 @@ export async function startAiStudy(): Promise<Result<{ sessionId: string }>> {
   const styles = (styleRows.data ?? []) as StudyStyle[];
   if (styles.length === 0) return { success: false, error: "We couldn't load humor styles. Please refresh and try again." };
 
-  const exclude = [...new Set((recent.data ?? []).map((row) => row.image_id).filter(Boolean))];
+  const recentRows = (recent.data ?? []) as { image_id: string | null; user_image_id?: string | null }[];
+  const exclude = [...new Set(recentRows.map((row) => row.image_id).filter(Boolean))];
   const { data: candidates, error: pickError } = await supabase.rpc("pick_ai_study_images", {
     p_count: AI_STUDY_CANDIDATES,
     p_exclude: exclude,
@@ -96,25 +94,42 @@ export async function startAiStudy(): Promise<Result<{ sessionId: string }>> {
     console.error("[startAiStudy] pick images failed", pickError);
     return { success: false, error: "We couldn't load images right now. Please try again." };
   }
-  const pool = ((candidates ?? []) as { id: string; url: string }[])
+  type Candidate = { imageId: string | null; userImageId: string | null; imageUrl: string; storedUrl: string };
+  const pool: Candidate[] = ((candidates ?? []) as { id: string; url: string }[])
     .map((row) => ({ id: row.id, url: resolveCaptionImageUrl(row.url) }))
-    .filter((row): row is { id: string; url: string } => Boolean(row.url));
+    .filter((row): row is { id: string; url: string } => Boolean(row.url))
+    .map((row) => ({ imageId: row.id, userImageId: null, imageUrl: row.url, storedUrl: row.url }));
+
+  // The participant's own photos (already moderated when uploaded); recently
+  // studied ones are used only when there is nothing fresher.
+  if (ownRows.error) console.error("[startAiStudy] load own images failed", ownRows.error);
+  const recentOwn = new Set(recentRows.map((row) => row.user_image_id).filter(Boolean));
+  const ownList = shuffle((ownRows.data ?? []) as { id: string; storage_path: string }[]);
+  const ownPicked = [...ownList.filter((row) => !recentOwn.has(row.id)), ...ownList.filter((row) => recentOwn.has(row.id))].slice(
+    0,
+    OWN_IMAGES_PER_STUDY
+  );
+  const ownSigned = await signStoragePaths(supabase, ownPicked.map((row) => row.storage_path));
+  const own: Candidate[] = ownPicked.flatMap((row) => {
+    const signedUrl = ownSigned.get(row.storage_path);
+    return signedUrl ? [{ imageId: null, userImageId: row.id, imageUrl: signedUrl, storedUrl: toUserImageRef(row.storage_path) }] : [];
+  });
 
   const personalized = consentRow.data?.personalization_consent === true;
   const profileSummary = personalized ? summaryRow.data?.summary ?? null : null;
 
-  type Pair = { imageId: string; imageUrl: string; captions: [{ style: StudyStyle; text: string }, { style: StudyStyle; text: string }] };
+  type Pair = { image: Candidate; captions: [{ style: StudyStyle; text: string }, { style: StudyStyle; text: string }] };
   let pairs: Pair[];
   try {
     // Moderate every candidate image, keep the first safe ones.
-    const flags = await Promise.all(pool.map((image) => moderateImage(config.apiKey, image.url).catch(() => true)));
-    const safe = pool.filter((_, i) => !flags[i]).slice(0, AI_STUDY_SIZE);
+    const flags = await Promise.all(pool.map((image) => moderateImage(config.apiKey, image.imageUrl).catch(() => true)));
+    const safe = shuffle([...own, ...pool.filter((_, i) => !flags[i]).slice(0, AI_STUDY_SIZE - own.length)]);
     if (safe.length === 0) return { success: false, error: "We couldn't find images for a study right now. Please try again." };
 
     const planned = assignStylePairs(styles, safe.length).map((stylePair, i) => ({
       slot: i + 1,
-      imageUrl: safe[i].url,
-      imageId: safe[i].id,
+      image: safe[i],
+      imageUrl: safe[i].imageUrl,
       styles: stylePair,
     }));
     // Parallel requests; one failed image is skipped instead of failing the study.
@@ -143,7 +158,7 @@ export async function startAiStudy(): Promise<Result<{ sessionId: string }>> {
       const a = forSlot?.get(item.styles[0].slug);
       const b = forSlot?.get(item.styles[1].slug);
       return a && b
-        ? [{ imageId: item.imageId, imageUrl: item.imageUrl, captions: [{ style: item.styles[0], text: a }, { style: item.styles[1], text: b }] as Pair["captions"] }]
+        ? [{ image: item.image, captions: [{ style: item.styles[0], text: a }, { style: item.styles[1], text: b }] as Pair["captions"] }]
         : [];
     });
     const flagged = await moderateTexts(config.apiKey, written.flatMap((pair) => pair.captions.map((caption) => caption.text)));
@@ -170,8 +185,9 @@ export async function startAiStudy(): Promise<Result<{ sessionId: string }>> {
         profile_id: user.id,
         batch_id: batchId,
         image_source: "study",
-        image_url: pair.imageUrl,
-        image_id: pair.imageId,
+        image_url: pair.image.storedUrl,
+        image_id: pair.image.imageId,
+        ...(pair.image.userImageId ? { user_image_id: pair.image.userImageId } : {}),
         session_id: session.id,
         position: pairPositions(i + 1)[side],
         style_id: caption.style.id,

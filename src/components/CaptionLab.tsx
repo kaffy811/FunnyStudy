@@ -3,7 +3,7 @@
 import { useState, type ChangeEvent } from "react";
 import Link from "next/link";
 
-import { generateLabCaptions, rateLabCaption, type LabCaption } from "@/app/caption-lab/actions";
+import { generateLabCaptions, rateLabCaption, saveLabCaption, type LabCaption } from "@/app/caption-lab/actions";
 import { MAX_UPLOAD_DATA_URL_CHARS } from "@/lib/caption-generation";
 
 type Props = {
@@ -77,6 +77,16 @@ export function CaptionLab({ configured, personalizationConsent }: Props) {
     }
   }
 
+  async function toggleSave(caption: LabCaption) {
+    const saved = !caption.saved;
+    setCaptions((list) => list.map((item) => (item.id === caption.id ? { ...item, saved } : item)));
+    const result = await saveLabCaption({ id: caption.id, saved });
+    if (!result.success) {
+      setCaptions((list) => list.map((item) => (item.id === caption.id ? { ...item, saved: caption.saved } : item)));
+      setError(result.error);
+    }
+  }
+
   const ratingClass = (active: boolean) =>
     `min-h-10 rounded-full border px-4 text-sm font-semibold transition ${
       active ? "border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-contrast)]" : "border-[var(--panel-border)] hover:border-[var(--accent)]"
@@ -114,8 +124,9 @@ export function CaptionLab({ configured, personalizationConsent }: Props) {
           {selection ? "Choose a different photo" : "Upload a photo"}
         </label>
         <p className="text-xs leading-5 text-[var(--muted)]">
-          Your photo is resized in your browser and sent to OpenAI to write the captions. FunnyStudy does not store the photo,
-          only the captions and your ratings. Please don&apos;t upload photos of people who haven&apos;t agreed to it.
+          Your photo is resized in your browser and sent to OpenAI to write the captions. FunnyStudy keeps the photo privately in
+          your account (only you can see it) and may show it in your own future studies. Please don&apos;t upload photos of people
+          who haven&apos;t agreed to it.
         </p>
         {selection ? (
           // eslint-disable-next-line @next/next/no-img-element -- whole uploaded photo preview
@@ -153,6 +164,9 @@ export function CaptionLab({ configured, personalizationConsent }: Props) {
                     </button>
                     <button type="button" aria-pressed={caption.rating === -1} onClick={() => void rate(caption, -1)} className={ratingClass(caption.rating === -1)}>
                       Not for me
+                    </button>
+                    <button type="button" aria-pressed={caption.saved} onClick={() => void toggleSave(caption)} className={ratingClass(caption.saved)}>
+                      {caption.saved ? "★ Saved" : "☆ Save"}
                     </button>
                     {caption.rating !== null ? (
                       <span className="text-xs text-[var(--muted)]">Style: {caption.styleName}</span>

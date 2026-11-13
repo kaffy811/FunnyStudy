@@ -125,7 +125,7 @@ are kept. Earlier migrations
 OpenAI API writes 4 captions in different humor styles and participants rate
 them. Set `OPENAI_API_KEY` (and optionally `OPENAI_MODEL`, default
 `gpt-4.1-mini`) as server-only environment variables in `.env.local` and in
-Vercel (Production and Preview). Uploaded photos are not stored. Tests:
+Vercel (Production and Preview). Uploaded photos are kept in the private `user-images` Storage bucket (owner-only), can be saved with captions to Your history, and may appear in that participant's own AI studies. Tests:
 `npm run test:captions`.
 
 

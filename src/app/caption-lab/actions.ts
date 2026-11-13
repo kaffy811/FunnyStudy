@@ -2,6 +2,8 @@
 
 import { randomUUID } from "node:crypto";
 
+import { revalidatePath } from "next/cache";
+
 import {
   buildCaptionMessages,
   CAPTION_PROMPT_VERSION,
@@ -16,8 +18,9 @@ import { generateHumorSummary } from "@/lib/humor-summary";
 import { createChatCompletion, moderateImage, moderateTexts, openAiConfig } from "@/lib/openai";
 import { fetchStyleCheckState, tallyStyles } from "@/lib/style-preferences";
 import { createClient } from "@/lib/supabase/server";
+import { decodeDataUrl, newUserImagePath, USER_IMAGE_BUCKET } from "@/lib/user-images";
 
-export type LabCaption = { id: number; styleId: number; styleName: string; text: string; rating: -1 | 1 | null };
+export type LabCaption = { id: number; styleId: number; styleName: string; text: string; rating: -1 | 1 | null; saved: boolean };
 export type GenerateResult =
   | { success: true; captions: LabCaption[]; personalized: boolean; droppedCount: number }
   | { success: false; error: string };
@@ -32,7 +35,8 @@ export async function generateLabCaptions(input: GenerateInput): Promise<Generat
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { success: false, error: "Please sign in to continue." };
 
-  // The uploaded photo is sent to OpenAI and never stored.
+  // The uploaded photo is sent to OpenAI and, once it passes moderation, kept
+  // in the participant's private Storage folder (see storeUpload).
   if (input?.source !== "upload" || !isValidUploadDataUrl(input.dataUrl)) {
     return { success: false, error: "Please choose a JPEG, PNG or WebP image under about 650 KB after resizing." };
   }
@@ -97,6 +101,7 @@ export async function generateLabCaptions(input: GenerateInput): Promise<Generat
     return { success: false, error: "We couldn't come up with captions for that image. Please try another one." };
   }
 
+  const userImageId = await storeUpload(supabase, user.id, imageUrl);
   const bySlug = new Map(state.styles.map((style) => [style.slug, style]));
   const batchId = randomUUID();
   const { data: inserted, error: insertError } = await supabase
@@ -107,6 +112,7 @@ export async function generateLabCaptions(input: GenerateInput): Promise<Generat
         batch_id: batchId,
         image_source: "upload",
         image_url: null,
+        ...(userImageId ? { user_image_id: userImageId } : {}),
         style_id: bySlug.get(caption.styleSlug)!.id,
         caption: caption.text,
         personalized,
@@ -131,8 +137,58 @@ export async function generateLabCaptions(input: GenerateInput): Promise<Generat
       styleName: byId.get(row.style_id as number)?.name ?? "",
       text: row.caption as string,
       rating: null,
+      saved: false,
     })),
   };
+}
+
+/**
+ * Keeps a moderated upload: bytes go to `user-images/<profile_id>/<uuid>.<ext>`
+ * (private bucket, own-folder RLS) and a `user_images` row records it. Returns
+ * null on any failure so captions are still saved without the photo.
+ */
+async function storeUpload(supabase: Awaited<ReturnType<typeof createClient>>, profileId: string, dataUrl: string) {
+  const decoded = decodeDataUrl(dataUrl);
+  if (!decoded) return null;
+  const path = newUserImagePath(profileId, randomUUID(), decoded.contentType);
+  const { error: uploadError } = await supabase.storage
+    .from(USER_IMAGE_BUCKET)
+    .upload(path, decoded.bytes, { contentType: decoded.contentType, upsert: false });
+  if (uploadError) {
+    console.error("[generateLabCaptions] photo upload failed", uploadError);
+    return null;
+  }
+  const { data, error } = await supabase.from("user_images").insert({ profile_id: profileId, storage_path: path }).select("id").single();
+  if (error || !data) {
+    console.error("[generateLabCaptions] photo record failed", error);
+    await supabase.storage.from(USER_IMAGE_BUCKET).remove([path]);
+    return null;
+  }
+  return data.id as string;
+}
+
+/** Saves a caption (with its photo) to Your history, or removes it. */
+export async function saveLabCaption(input: { id: number; saved: boolean }) {
+  const { id, saved } = input ?? {};
+  if (!Number.isSafeInteger(id) || id <= 0 || typeof saved !== "boolean") {
+    return { success: false as const, error: "Invalid caption." };
+  }
+  const supabase = await createClient({ allowCookieWrite: true });
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { success: false as const, error: "Please sign in to continue." };
+
+  const { data, error } = await supabase
+    .from("ai_generated_captions")
+    .update({ saved_datetime_utc: saved ? new Date().toISOString() : null })
+    .eq("id", id)
+    .eq("profile_id", user.id)
+    .select("id");
+  if (error || !data?.length) {
+    if (error) console.error("[saveLabCaption] update failed", error);
+    return { success: false as const, error: "We couldn't save that caption. Please try again." };
+  }
+  revalidatePath("/history");
+  return { success: true as const };
 }
 
 export async function rateLabCaption(input: { id: number; rating: -1 | 1 | null }) {

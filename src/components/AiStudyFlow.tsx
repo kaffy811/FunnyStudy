@@ -151,7 +151,7 @@ export function AiStudyFlow({ sessionId, items: initialItems, configured, person
       setPending(null);
       return setError(result.error);
     }
-    router.refresh();
+    router.push(`/ai-study?session=${result.sessionId}`);
   }
 
   async function choose(pair: AiStudyPair, picked: AbChoice) {
@@ -189,10 +189,10 @@ export function AiStudyFlow({ sessionId, items: initialItems, configured, person
     return (
       <div data-native-scroll-region="true" className="mx-auto flex w-full max-w-xl flex-col gap-4 overflow-y-auto">
         <div className={panel}>
-          <h1 className="text-3xl font-black sm:text-4xl">Your study for today</h1>
+          <h1 className="text-3xl font-black sm:text-4xl">Start a new study</h1>
           <p className="mt-3 text-sm leading-6 text-[var(--muted)] sm:text-base">
             We&apos;ll pick about 10 random images and an AI writes two captions for each one in different humor styles. Tap the
-            caption you find funnier (or <strong>Neither</strong>). When you finish, the AI updates your humor profile.
+            caption you find funnier (or <strong>Neither</strong>). When you finish, the AI updates your humor profile. Photos you uploaded in the Caption lab may show up too.
           </p>
           <p className="mt-3 text-xs leading-5 text-[var(--muted)]">
             {personalized
